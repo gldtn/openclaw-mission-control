@@ -28,11 +28,40 @@ function dayKey(iso: string): string {
 
 async function ensureCalendarMemoryFiles(workspace: string): Promise<void> {
   await mkdir(workspace, { recursive: true });
+  const calendarPath = join(workspace, "CALENDAR.md");
   const reminderPath = join(workspace, "REMINDER.md");
   const eventPath = join(workspace, "EVENT.md");
+  const calendarDoc = `# Calendar Playbook (Mission Control)
+
+This workspace uses a local calendar system for reminders/events shown in Mission Control.
+
+## Source of truth
+
+- Primary source: \`calendar-events.json\` in this workspace.
+- \`REMINDER.md\` and \`EVENT.md\` define object shapes/rules.
+- \`TASKS.md\` remains separate and should not be rewritten for calendar operations.
+
+## Core policy
+
+- When user asks to create a reminder/appointment/event, always write it to \`calendar-events.json\`.
+- When user asks about upcoming/next events, read \`calendar-events.json\` first.
+- Do not rely only on Google Calendar unless user explicitly asks for it.
+- If using external calendar tools, still mirror the item into \`calendar-events.json\`.
+
+## Time handling
+
+- Default timezone: \`America/New_York\` unless user says otherwise.
+- Convert natural language dates/times into a concrete ISO datetime in \`dueAt\`.
+- If user says only date (no time), default to \`09:00\` local time.
+`;
   const reminderDoc = `# Reminders (calendar-events.json)
 
 This workspace uses \`calendar-events.json\` for reminders/events used by Mission Control calendar.
+
+## Priority order
+- Follow \`CALENDAR.md\` first for behavior/policy.
+- Use this file for reminder-specific schema details.
+- Keep \`TASKS.md\` separate unless user explicitly asks to create/update tasks.
 
 ## Rules
 - Add reminders as objects in \`calendar-events.json\` with \`kind: "reminder"\`.
@@ -59,6 +88,11 @@ This workspace uses \`calendar-events.json\` for reminders/events used by Missio
 
 This workspace uses \`calendar-events.json\` for reminders/events used by Mission Control calendar.
 
+## Priority order
+- Follow \`CALENDAR.md\` first for behavior/policy.
+- Use this file for event-specific schema details.
+- Keep \`TASKS.md\` separate unless user explicitly asks to create/update tasks.
+
 ## Rules
 - Add appointments/events as objects in \`calendar-events.json\` with \`kind: "event"\`.
 - Use ISO date-time in \`dueAt\`.
@@ -78,6 +112,12 @@ This workspace uses \`calendar-events.json\` for reminders/events used by Missio
 }
 \`\`\`
 `;
+
+  try {
+    await readFile(calendarPath, "utf-8");
+  } catch {
+    await writeFile(calendarPath, calendarDoc, "utf-8");
+  }
 
   try {
     await readFile(reminderPath, "utf-8");
