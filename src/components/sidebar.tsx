@@ -73,8 +73,8 @@ const navItems: NavItem[] = [
   { section: "agents", label: "Agents", icon: Users, href: "/agents" },
   { section: "agents", label: "Subagents", icon: Users2, href: "/agents?tab=subagents", tab: "subagents", isSubItem: true },
   // ── Work ──
-  { section: "calendar", label: "Calendar", icon: CalendarDays, href: "/calendar" },
-  { group: "Work", section: "tasks", label: "Tasks", icon: ListChecks, href: "/tasks" },
+  { group: "Work", section: "calendar", label: "Calendar", icon: CalendarDays, href: "/calendar" },
+  { section: "tasks", label: "Tasks", icon: ListChecks, href: "/tasks" },
   { section: "sessions", label: "Sessions", icon: MessageSquare, href: "/sessions" },
   { section: "cron", label: "Cron Jobs", icon: Clock, href: "/cron" },
   { section: "cron", label: "Heartbeat", icon: Heart, href: "/heartbeat", tab: "heartbeat", isSubItem: true },
