@@ -848,7 +848,7 @@ export function DocsView() {
                 className={cn(
                   "rounded-md border px-2 py-1 text-xs font-medium transition-colors",
                   tagFilter === tag
-                    ? TAG_COLORS[tag] || TAG_COLORS.Other
+                    ? "border-[var(--accent-brand-border)] bg-[var(--accent-brand-subtle)] text-[var(--accent-brand-text)]"
                     : "border-foreground/10 bg-muted/70 text-muted-foreground hover:bg-muted hover:text-muted-foreground"
                 )}
               >
