@@ -3603,11 +3603,11 @@ function WorkspaceFilesModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
       <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-backdrop-in"
         onClick={onClose}
       />
 
-      <div className="relative z-10 flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-foreground/10 bg-card/95 shadow-2xl">
+      <div className="relative z-10 flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl glass-strong animate-modal-in">
         <div className="flex shrink-0 items-center justify-between border-b border-foreground/10 px-5 py-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">

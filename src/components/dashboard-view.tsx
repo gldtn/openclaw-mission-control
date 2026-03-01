@@ -35,6 +35,7 @@ import {
 import { cn } from "@/lib/utils";
 import { SectionBody, SectionLayout } from "@/components/section-layout";
 import { getTimeFormatSnapshot, withTimeFormat } from "@/lib/time-format-preference";
+import { useGatewayStatusStore } from "@/lib/gateway-status-store";
 
 /* ── types ────────────────────────────────────────── */
 
@@ -668,6 +669,7 @@ export function DashboardView() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { stats: sysStats, connected: sseConnected } = useSystemStats();
+  const gwStore = useGatewayStatusStore();
 
   const fetchLive = useCallback(async () => {
     try {
@@ -753,7 +755,13 @@ export function DashboardView() {
   }
 
   const gw = live.gateway;
-  const isOnline = gw.status === "online";
+  // Use the shared gateway status store (same source as the header) to avoid
+  // conflicting online/offline indicators.  Fall back to /api/live data only
+  // while the store is still in its initial "loading" state.
+  const isOnline =
+    gwStore.status !== "loading"
+      ? gwStore.status === "online"
+      : gw.status === "online";
 
   // ── Issue detection ──────────────────────────────
   type Issue = {
@@ -1365,6 +1373,13 @@ export function DashboardView() {
           </div>
           <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40" />
         </Link>
+        {/* ── Build info ── */}
+        <div className="pt-2 text-center text-[10px] text-muted-foreground/30">
+          Mission Control {process.env.NEXT_PUBLIC_APP_VERSION}
+          {process.env.NEXT_PUBLIC_COMMIT_HASH && (
+            <span className="ml-1 font-mono">({process.env.NEXT_PUBLIC_COMMIT_HASH})</span>
+          )}
+        </div>
       </SectionBody>
     </SectionLayout>
   );

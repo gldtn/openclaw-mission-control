@@ -22,7 +22,11 @@ import {
   Paperclip,
   X,
   Brain,
+  KeyRound,
+  ArrowRight,
+  ExternalLink,
 } from "lucide-react";
+import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
@@ -54,11 +58,6 @@ type Agent = {
 function agentDisplayName(agent: Agent): string {
   if (agent.name && agent.name !== agent.id) return agent.name;
   return formatModel(agent.model);
-}
-
-function agentSubtitle(agent: Agent): string {
-  if (agent.name && agent.name !== agent.id) return formatModel(agent.model);
-  return agent.id;
 }
 
 function formatTime(d: Date | undefined, timeFormat: TimeFormatPreference) {
@@ -247,6 +246,7 @@ function ChatPanel({
   isSelected,
   isVisible,
   availableModels,
+  modelsLoaded,
 }: {
   agentId: string;
   agentName: string;
@@ -255,6 +255,7 @@ function ChatPanel({
   isSelected: boolean;
   isVisible: boolean;
   availableModels: Array<{ key: string; name: string }>;
+  modelsLoaded: boolean;
 }) {
   const timeFormat = useSyncExternalStore(
     subscribeTimeFormatPreference,
@@ -327,6 +328,7 @@ function ChatPanel({
   });
 
   const isLoading = status === "submitted" || status === "streaming";
+  const noApiKeys = modelsLoaded && availableModels.length === 0;
 
   // ── Detect new assistant messages → trigger unread notification ──
   useEffect(() => {
@@ -373,7 +375,7 @@ function ChatPanel({
   const handleSend = useCallback(async () => {
     const text = inputValue.trim();
     const hasFiles = attachedFiles.length > 0;
-    if ((!text && !hasFiles) || isLoading) return;
+    if ((!text && !hasFiles) || isLoading || noApiKeys) return;
     setInputValue("");
     if (inputRef.current) inputRef.current.style.height = "auto";
     const fileParts = hasFiles ? await filesToUIParts(attachedFiles) : undefined;
@@ -382,7 +384,7 @@ function ChatPanel({
       { text: text || "", files: fileParts },
       { body: { model: modelOverride ?? undefined } }
     );
-  }, [inputValue, isLoading, attachedFiles, modelOverride, sendMessage]);
+  }, [inputValue, isLoading, noApiKeys, attachedFiles, modelOverride, sendMessage]);
 
   const clearChat = useCallback(() => {
     setMessages([]);
@@ -420,42 +422,111 @@ function ChatPanel({
       {/* ── Messages area ───────────────────────── */}
       <div className="flex-1 overflow-y-auto">
         {messages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-4 px-4 md:px-6">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted/80 text-xl">
-              {emoji}
+          noApiKeys ? (
+            /* ── No API keys — onboarding empty state ── */
+            <div className="flex h-full items-center justify-center px-4 md:px-6">
+              <div className="relative w-full max-w-md animate-modal-in">
+                {/* Warm radial glow behind the card */}
+                <div className="pointer-events-none absolute -inset-12 rounded-full bg-[var(--accent-brand)] opacity-[0.04] blur-3xl" />
+
+                <div className="relative rounded-2xl border border-[var(--accent-brand-border)]/60 bg-card p-6 shadow-lg shadow-[var(--accent-brand-ring)]/10">
+                  {/* Step indicator */}
+                  <div className="mb-5 flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--accent-brand)] text-[var(--accent-brand-on)] shadow-sm">
+                      <KeyRound className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold tracking-tight text-foreground">
+                        Add your API key
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        One-time setup &middot; takes 30 seconds
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Explanation */}
+                  <p className="mb-5 text-xs leading-relaxed text-muted-foreground">
+                    An API key is a password that lets your agent connect to an AI
+                    service (like ChatGPT or Claude). Get one from any provider below,
+                    then paste it in Settings.
+                  </p>
+
+                  {/* Provider cards */}
+                  <div className="mb-5 grid grid-cols-2 gap-2">
+                    {[
+                      { emoji: "🟢", name: "OpenAI", hint: "ChatGPT, GPT-4o", url: "https://platform.openai.com/api-keys" },
+                      { emoji: "🟣", name: "Anthropic", hint: "Claude", url: "https://console.anthropic.com/settings/keys" },
+                      { emoji: "🔵", name: "Google", hint: "Gemini", url: "https://aistudio.google.com/apikey" },
+                      { emoji: "🟠", name: "OpenRouter", hint: "Many models", url: "https://openrouter.ai/keys" },
+                    ].map((p) => (
+                      <a
+                        key={p.name}
+                        href={p.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="group flex items-center gap-2.5 rounded-xl border border-foreground/8 bg-muted/40 px-3 py-2.5 transition-all hover:border-[var(--accent-brand-border)] hover:bg-[var(--accent-brand-subtle)] hover:shadow-sm"
+                      >
+                        <span className="text-base">{p.emoji}</span>
+                        <div className="min-w-0 flex-1">
+                          <span className="block text-xs font-medium text-foreground/80 group-hover:text-foreground">{p.name}</span>
+                          <span className="block text-[11px] text-muted-foreground/60">{p.hint}</span>
+                        </div>
+                        <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground/30 transition-colors group-hover:text-[var(--accent-brand-text)]" />
+                      </a>
+                    ))}
+                  </div>
+
+                  {/* CTA */}
+                  <Link
+                    href="/accounts"
+                    className="group flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--accent-brand)] px-5 py-2.5 text-sm font-medium text-[var(--accent-brand-on)] shadow-sm transition-all hover:opacity-90 hover:shadow-md"
+                  >
+                    I have a key &mdash; paste it now
+                    <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+                  </Link>
+                </div>
+              </div>
             </div>
-            <div className="text-center">
-              <h3 className="text-xs font-semibold text-foreground/90">
-                Chat with {agentName}
-              </h3>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Send a message to start a conversation with your agent.
-              </p>
-              <p className="mt-0.5 text-xs text-muted-foreground/60">
-                Powered by {formatModel(agentModel)}
-              </p>
+          ) : (
+            /* ── Normal empty state — ready to chat ── */
+            <div className="flex h-full flex-col items-center justify-center gap-4 px-4 md:px-6">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted/80 text-xl">
+                {emoji}
+              </div>
+              <div className="text-center">
+                <h3 className="text-xs font-semibold text-foreground/90">
+                  Chat with {agentName}
+                </h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Send a message to start a conversation with your agent.
+                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground/60">
+                  Using {formatModel(agentModel)}
+                </p>
+              </div>
+              {/* Quick prompts */}
+              <div className="mt-4 flex flex-wrap justify-center gap-2">
+                {[
+                  "What did you do today?",
+                  "Check my scheduled tasks",
+                  "Summarize recent activity",
+                  "What tasks are pending?",
+                ].map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    onClick={() => {
+                      sendMessage({ text: prompt });
+                    }}
+                    className="rounded-lg border border-foreground/10 bg-muted/60 px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground/70"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
             </div>
-            {/* Quick prompts */}
-            <div className="mt-4 flex flex-wrap justify-center gap-2">
-              {[
-                "What did you do today?",
-                "Check my cron jobs",
-                "Summarize recent activity",
-                "What tasks are pending?",
-              ].map((prompt) => (
-                <button
-                  key={prompt}
-                  type="button"
-                  onClick={() => {
-                    sendMessage({ text: prompt });
-                  }}
-                  className="rounded-lg border border-foreground/10 bg-muted/60 px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground/70"
-                >
-                  {prompt}
-                </button>
-              ))}
-            </div>
-          </div>
+          )
         ) : (
           <div className="mx-auto max-w-3xl px-4 py-6">
             {messages.map((message) => {
@@ -589,34 +660,72 @@ function ChatPanel({
 
             {/* Error display */}
             {error && (
-              <div className="mb-6 flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3">
-<span className="text-xs text-red-400">
-                {error.message}
-              </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const lastUser = [...messages]
-                      .reverse()
-                      .find((m) => m.role === "user");
-                    if (lastUser) {
-                      const retryText =
-                        lastUser.parts
-                          ?.filter(
-                            (p): p is { type: "text"; text: string } =>
-                              p.type === "text"
-                          )
-                          .map((p) => p.text)
-                          .join("") || "";
-                      if (retryText) sendMessage({ text: retryText });
-                    }
-                  }}
-                  className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-xs text-red-400 transition-colors hover:bg-red-500/10"
-                >
-                  <RefreshCw className="h-3 w-3" />
-                  Retry
-                </button>
-              </div>
+              /No API key found|api[._-]key|auth.profiles|FailoverError|Configure auth/i.test(error.message) ? (
+                /* Friendly API key error — inline card */
+                <div className="mb-6 overflow-hidden rounded-xl border border-[var(--accent-brand-border)]/60 bg-card shadow-sm animate-modal-in">
+                  <div className="flex items-center gap-2.5 border-b border-[var(--accent-brand-border)]/40 bg-[var(--accent-brand-subtle)] px-4 py-2.5">
+                    <KeyRound className="h-3.5 w-3.5 text-[var(--accent-brand-text)]" />
+                    <span className="text-xs font-medium text-[var(--accent-brand-text)]">API key missing</span>
+                  </div>
+                  <div className="px-4 py-3.5">
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      Your agent needs an API key to reply. Grab one from a provider
+                      like{" "}
+                      <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="font-medium text-[var(--accent-brand-text)] underline decoration-[var(--accent-brand-border)] underline-offset-2 hover:text-[var(--accent-brand)]">
+                        OpenAI
+                      </a>{" "}
+                      or{" "}
+                      <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="font-medium text-[var(--accent-brand-text)] underline decoration-[var(--accent-brand-border)] underline-offset-2 hover:text-[var(--accent-brand)]">
+                        Anthropic
+                      </a>
+                      , then paste it in Settings.
+                    </p>
+                    <Link
+                      href="/accounts"
+                      className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-[var(--accent-brand)] px-3.5 py-1.5 text-xs font-medium text-[var(--accent-brand-on)] transition-all hover:opacity-90 hover:shadow-sm"
+                    >
+                      <KeyRound className="h-3 w-3" />
+                      Add API Key
+                      <ArrowRight className="h-3 w-3" />
+                    </Link>
+                  </div>
+                </div>
+              ) : (
+                /* Generic error */
+                <div className="mb-6 rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-red-400">
+                      Something went wrong
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const lastUser = [...messages]
+                          .reverse()
+                          .find((m) => m.role === "user");
+                        if (lastUser) {
+                          const retryText =
+                            lastUser.parts
+                              ?.filter(
+                                (p): p is { type: "text"; text: string } =>
+                                  p.type === "text"
+                              )
+                              .map((p) => p.text)
+                              .join("") || "";
+                          if (retryText) sendMessage({ text: retryText });
+                        }
+                      }}
+                      className="flex items-center gap-1 rounded px-2 py-1 text-xs text-red-400 transition-colors hover:bg-red-500/10"
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                      Try again
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-red-400/70">
+                    {error.message}
+                  </p>
+                </div>
+              )
             )}
 
             <div ref={messagesEndRef} />
@@ -677,9 +786,9 @@ function ChatPanel({
                 value={inputValue}
                 onChange={handleTextareaChange}
                 onKeyDown={handleKeyDown}
-                placeholder={`Message ${agentName}...`}
+                placeholder={noApiKeys ? "Add an API key to start chatting..." : `Message ${agentName}...`}
                 rows={1}
-                disabled={isLoading}
+                disabled={isLoading || noApiKeys}
                 className="max-h-48 flex-1 resize-none bg-transparent px-3 pt-2.5 pb-1 text-xs text-foreground/90 outline-none placeholder:text-muted-foreground/60 disabled:opacity-50 sm:px-4"
               />
               {/* Inline toolbar */}
@@ -696,7 +805,7 @@ function ChatPanel({
                   <button
                     type="button"
                     onClick={() => setModelMenuOpen((open) => !open)}
-                    title={modelOverride ? formatModel(modelOverride) : `Model: ${formatModel(agentModel)}`}
+                    title={modelOverride ? formatModel(modelOverride) : `AI model: ${formatModel(agentModel)}`}
                     className={cn(
                       "flex h-7 items-center gap-1 rounded-md px-1.5 text-xs transition-colors",
                       modelOverride
@@ -765,10 +874,10 @@ function ChatPanel({
             <button
               type="button"
               onClick={handleSend}
-              disabled={(!inputValue.trim() && attachedFiles.length === 0) || isLoading}
+              disabled={(!inputValue.trim() && attachedFiles.length === 0) || isLoading || noApiKeys}
               className={cn(
                 "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors",
-                (inputValue.trim() || attachedFiles.length > 0) && !isLoading
+                (inputValue.trim() || attachedFiles.length > 0) && !isLoading && !noApiKeys
                   ? "bg-primary text-primary-foreground hover:bg-primary/90"
                   : "bg-muted text-muted-foreground/60"
               )}
@@ -786,7 +895,7 @@ function ChatPanel({
           </div>
         </div>
         <p className="mx-auto mt-2 max-w-3xl text-center text-xs text-muted-foreground/40">
-          Messages are sent to your OpenClaw agent. You can send text, attachments only, or both. Press Enter to send, Shift+Enter for new line.
+          Press Enter to send, Shift+Enter for a new line. You can also attach files.
         </p>
       </div>
     </div>
@@ -800,6 +909,7 @@ export function ChatView({ isVisible = true }: { isVisible?: boolean }) {
   const [selectedAgent, setSelectedAgent] = useState<string>("main");
   const [agentsLoading, setAgentsLoading] = useState(true);
   const [availableModels, setAvailableModels] = useState<Array<{ key: string; name: string }>>([]);
+  const [modelsLoaded, setModelsLoaded] = useState(false);
   const [agentDropdownOpen, setAgentDropdownOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -859,7 +969,8 @@ export function ChatView({ isVisible = true }: { isVisible?: boolean }) {
             .filter((m: { key: string }) => m.key)
         );
       })
-      .catch(() => { });
+      .catch(() => { })
+      .finally(() => setModelsLoaded(true));
   }, []);
 
   useEffect(() => {
@@ -941,7 +1052,7 @@ export function ChatView({ isVisible = true }: { isVisible?: boolean }) {
                 <div className="absolute left-0 top-full z-50 mt-1 min-w-60 overflow-hidden rounded-lg border border-foreground/10 bg-card/95 py-1 shadow-xl backdrop-blur-sm">
                   {agentsLoading ? (
                     <div className="px-3 py-2 text-xs text-muted-foreground">
-                      Discovering agents...
+                      Loading agents...
                     </div>
                   ) : agents.length === 0 ? (
                     <div className="px-3 py-2 text-xs text-muted-foreground">
@@ -974,9 +1085,10 @@ export function ChatView({ isVisible = true }: { isVisible?: boolean }) {
                               )}
                           </div>
                           <span className="text-xs text-muted-foreground">
-                            {agentSubtitle(agent)} &bull; {formatModel(agent.model)} &bull;{" "}
-                            {agent.sessionCount} session
-                            {agent.sessionCount !== 1 ? "s" : ""}
+                            {formatModel(agent.model)}
+                            {agent.sessionCount > 0 && (
+                              <> &bull; {agent.sessionCount} chat{agent.sessionCount !== 1 ? "s" : ""}</>
+                            )}
                           </span>
                         </div>
                         {agent.id === selectedAgent && (
@@ -991,13 +1103,12 @@ export function ChatView({ isVisible = true }: { isVisible?: boolean }) {
               )}
             </div>
 
-            {/* Model / agent ID badge */}
+            {/* Model badge */}
             {currentAgent && (
               <div className="flex items-center gap-1.5 rounded-md border border-foreground/10 bg-muted/60 px-2 py-1">
                 <Cpu className="h-3 w-3 text-muted-foreground" />
                 <span className="text-xs text-muted-foreground">
-                  {agentSubtitle(currentAgent)}
-                  {currentAgent.name !== currentAgent.id && ` · ${formatModel(currentAgent.model)}`}
+                  {formatModel(currentAgent.model)}
                 </span>
               </div>
             )}
@@ -1005,7 +1116,7 @@ export function ChatView({ isVisible = true }: { isVisible?: boolean }) {
 
           <div className="flex items-center gap-1 text-xs text-muted-foreground/60">
             <span>
-              {agents.length} agent{agents.length !== 1 ? "s" : ""} discovered
+              {agents.length} agent{agents.length !== 1 ? "s" : ""}
             </span>
           </div>
         </div>
@@ -1029,6 +1140,7 @@ export function ChatView({ isVisible = true }: { isVisible?: boolean }) {
             isSelected={agentId === selectedAgent}
             isVisible={isVisible}
             availableModels={availableModels}
+            modelsLoaded={modelsLoaded}
           />
         );
       })}
