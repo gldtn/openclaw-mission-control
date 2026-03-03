@@ -11,6 +11,7 @@ export type CalendarEntry = {
   title: string;
   notes?: string;
   dueAt: string;
+  endAt?: string;
   status: CalendarEntryStatus;
   createdAt: string;
   updatedAt: string;
@@ -20,6 +21,10 @@ export type CalendarEntry = {
   provider?: "caldav";
   providerAccountId?: string;
   externalId?: string;
+  providerItemUrl?: string;
+  providerEtag?: string;
+  providerComponent?: "VEVENT" | "VTODO";
+  providerCalendarUrl?: string;
   readOnly?: boolean;
   lastSyncedAt?: string;
   deliveredAt?: string;
@@ -104,6 +109,7 @@ export async function upsertCalendarEntry(
   const now = new Date().toISOString();
   const dueAt = resolveDueAt(payload.dueAt);
   if (!dueAt) throw new Error("Invalid dueAt");
+  const endAt = payload.endAt ? resolveDueAt(payload.endAt) : null;
 
   const next: CalendarEntry = {
     id: payload.id || randomUUID(),
@@ -111,6 +117,7 @@ export async function upsertCalendarEntry(
     title: payload.title.trim(),
     notes: payload.notes?.trim() || undefined,
     dueAt,
+    endAt: endAt || undefined,
     status: payload.status,
     source: payload.source,
     channel: payload.channel,
@@ -146,7 +153,7 @@ export async function upsertCalendarEntry(
 export async function patchCalendarEntry(
   workspace: string,
   id: string,
-  patch: Partial<Pick<CalendarEntry, "kind" | "title" | "notes" | "dueAt" | "status" | "lastError" | "deliveredAt">> & {
+  patch: Partial<Pick<CalendarEntry, "kind" | "title" | "notes" | "dueAt" | "endAt" | "status" | "lastError" | "deliveredAt" | "providerEtag">> & {
     previousStatus?: CalendarEntryStatus | null;
   }
 ): Promise<CalendarEntry | null> {
@@ -158,6 +165,15 @@ export async function patchCalendarEntry(
   const nextDueAt = patch.dueAt != null ? resolveDueAt(patch.dueAt) : current.dueAt;
   if (!nextDueAt) throw new Error("Invalid dueAt");
   const next: CalendarEntry = { ...current, dueAt: nextDueAt, updatedAt: now };
+  if (patch.endAt !== undefined) {
+    if (!patch.endAt) {
+      delete next.endAt;
+    } else {
+      const resolvedEndAt = resolveDueAt(patch.endAt);
+      if (!resolvedEndAt) throw new Error("Invalid endAt");
+      next.endAt = resolvedEndAt;
+    }
+  }
 
   if (patch.kind === "reminder" || patch.kind === "event") {
     next.kind = patch.kind;
@@ -178,6 +194,9 @@ export async function patchCalendarEntry(
   }
   if (typeof patch.deliveredAt === "string") {
     next.deliveredAt = patch.deliveredAt;
+  }
+  if (typeof patch.providerEtag === "string") {
+    next.providerEtag = patch.providerEtag;
   }
   if (patch.previousStatus === null) {
     delete next.previousStatus;

@@ -15,14 +15,22 @@ import {
   type CalendarEntryStatus,
 } from "@/lib/calendar-store";
 import {
+  deleteGoogleOAuthClientConfig,
+  clearGoogleOAuthTokens,
   deleteCalendarProvider,
+  deleteCalDavProviderItem,
+  createCalDavProviderItem,
+  getGoogleOAuthAccessToken,
+  getGoogleOAuthStatus,
   markCalendarProviderStatus,
   purgeProviderEvents,
+  readGoogleOAuthClientConfig,
   readCalendarProviderSecret,
   readCalendarProviders,
   syncCalDavProvider,
-  testCalDavConnection,
   testOrDiscoverCalDavConnection,
+  updateCalDavProviderItem,
+  upsertGoogleOAuthClientConfig,
   upsertCalendarProvider,
 } from "@/lib/calendar-providers";
 
@@ -165,6 +173,8 @@ export async function GET() {
     const entries = await readCalendarEntries(workspace);
     const taskDue = await readTaskDueDates(workspace);
     const providers = await readCalendarProviders(workspace);
+    const googleOAuth = await readGoogleOAuthClientConfig();
+    const googleOAuthStatus = await getGoogleOAuthStatus();
 
     const combined = [
       ...entries.map((e) => ({ ...formatEntryForCalendar(e), type: e.kind })),
@@ -190,6 +200,13 @@ export async function GET() {
         secretRef: p.secretRef ? `${p.secretRef.slice(0, 10)}***` : "",
         hasSecret: Boolean(p.secretRef),
       })),
+      googleOAuth: {
+        configured: Boolean(googleOAuth?.clientId && googleOAuth?.secretRef),
+        connected: googleOAuthStatus.connected,
+        tokenExpiresAt: googleOAuthStatus.expiresAt || "",
+        clientId: googleOAuth?.clientId || "",
+        redirectUri: googleOAuth?.redirectUri || "",
+      },
       workspace,
     });
   } catch (err) {
@@ -220,6 +237,8 @@ export async function POST(request: NextRequest) {
 
     if (action === "providers-list") {
       const providers = await readCalendarProviders(workspace);
+      const googleOAuth = await readGoogleOAuthClientConfig();
+      const googleOAuthStatus = await getGoogleOAuthStatus();
       return NextResponse.json({
         ok: true,
         providers: providers.map((p) => ({
@@ -227,68 +246,123 @@ export async function POST(request: NextRequest) {
           secretRef: p.secretRef ? `${p.secretRef.slice(0, 10)}***` : "",
           hasSecret: Boolean(p.secretRef),
         })),
+        googleOAuth: {
+          configured: Boolean(googleOAuth?.clientId && googleOAuth?.secretRef),
+          connected: googleOAuthStatus.connected,
+          tokenExpiresAt: googleOAuthStatus.expiresAt || "",
+          clientId: googleOAuth?.clientId || "",
+          redirectUri: googleOAuth?.redirectUri || "",
+        },
       });
+    }
+
+    if (action === "google-oauth-config-set") {
+      const clientId = String(body?.clientId || "").trim();
+      const clientSecret = String(body?.clientSecret || "").trim();
+      const redirectUri = String(body?.redirectUri || "").trim();
+      if (!clientId || !clientSecret) {
+        return NextResponse.json({ ok: false, error: "clientId and clientSecret are required" }, { status: 400 });
+      }
+      const stored = await upsertGoogleOAuthClientConfig({
+        clientId,
+        clientSecret,
+        redirectUri: redirectUri || undefined,
+      });
+      return NextResponse.json({
+        ok: true,
+        googleOAuth: {
+          configured: true,
+          clientId: stored.clientId,
+          redirectUri: stored.redirectUri || "",
+          updatedAt: stored.updatedAt,
+        },
+      });
+    }
+
+    if (action === "google-oauth-config-clear") {
+      await clearGoogleOAuthTokens();
+      await deleteGoogleOAuthClientConfig();
+      return NextResponse.json({ ok: true, googleOAuth: { configured: false, connected: false, clientId: "", redirectUri: "" } });
     }
 
     if (action === "provider-test") {
       const type = body?.type === "caldav" ? "caldav" : "caldav";
+      const vendor = body?.vendor === "google" ? "google" : "icloud";
       if (type !== "caldav") {
         return NextResponse.json({ ok: false, error: "Only CalDAV is currently supported" }, { status: 400 });
       }
-      const serverUrl = String(body?.serverUrl || body?.calendarUrl || "https://caldav.icloud.com").trim();
+      const defaultServer = vendor === "google" ? "https://apidata.googleusercontent.com/caldav/v2" : "https://caldav.icloud.com";
+      const serverUrl = String(body?.serverUrl || body?.calendarUrl || defaultServer).trim();
       const calendarUrl = String(body?.calendarUrl || "").trim();
+      const calendarId = String(body?.calendarId || "").trim();
       const username = String(body?.username || "").trim();
-      const cutoffDate = String(body?.cutoffDate || "").trim();
       const password = String(body?.password || "").trim();
-      if (!username || !password) {
-        return NextResponse.json({ ok: false, error: "username and password are required" }, { status: 400 });
+      if (!username) {
+        return NextResponse.json({ ok: false, error: "username is required" }, { status: 400 });
       }
-      const result = await testOrDiscoverCalDavConnection({ serverUrl, calendarUrl, username }, password);
+      const credential = vendor === "google" ? await getGoogleOAuthAccessToken() : password;
+      if (!credential) {
+        return NextResponse.json({ ok: false, error: "password is required" }, { status: 400 });
+      }
+      const result = await testOrDiscoverCalDavConnection({ serverUrl, calendarUrl, username, vendor, calendarId }, credential);
       return NextResponse.json({ ok: true, calendarUrl: result.calendarUrl });
     }
 
     if (action === "provider-add") {
       const type = body?.type === "caldav" ? "caldav" : "caldav";
+      const vendor = body?.vendor === "google" ? "google" : "icloud";
       const id = typeof body?.id === "string" ? body.id : undefined;
       const label = String(body?.label || "").trim();
-      const serverUrl = String(body?.serverUrl || body?.calendarUrl || "https://caldav.icloud.com").trim();
+      const defaultServer = vendor === "google" ? "https://apidata.googleusercontent.com/caldav/v2" : "https://caldav.icloud.com";
+      const serverUrl = String(body?.serverUrl || body?.calendarUrl || defaultServer).trim();
       let calendarUrl = String(body?.calendarUrl || "").trim();
+      const calendarId = String(body?.calendarId || "").trim();
       const username = String(body?.username || "").trim();
       const cutoffDate = String(body?.cutoffDate || "").trim();
       const password = String(body?.password || "").trim();
-      if (!label || !username || (!id && !password)) {
-        return NextResponse.json({ ok: false, error: "label and username are required (password required for new provider)" }, { status: 400 });
+      if (!label || !username) {
+        return NextResponse.json({ ok: false, error: "label and username are required" }, { status: 400 });
       }
       const existing = id ? (await readCalendarProviders(workspace)).find((p) => p.id === id) : undefined;
       if (id && !existing) {
         return NextResponse.json({ ok: false, error: "Provider account not found" }, { status: 404 });
       }
-      const secretForDiscovery = password || (existing ? (await readCalendarProviderSecret(existing.secretRef)) || "" : "");
+      let secretForDiscovery = "";
+      if (vendor === "google") {
+        secretForDiscovery = await getGoogleOAuthAccessToken();
+      } else {
+        if (!id && !password) {
+          return NextResponse.json({ ok: false, error: "password is required for new provider" }, { status: 400 });
+        }
+        secretForDiscovery = password || (existing?.secretRef ? (await readCalendarProviderSecret(existing.secretRef)) || "" : "");
+      }
       if (!calendarUrl || /^https?:\/\/[^/]+\/?$/i.test(calendarUrl)) {
         if (!secretForDiscovery) {
-          return NextResponse.json({ ok: false, error: "Password is required to discover calendar URL" }, { status: 400 });
+          return NextResponse.json({ ok: false, error: "Credentials are required to discover calendar URL" }, { status: 400 });
         }
-        const discovered = await testOrDiscoverCalDavConnection({ serverUrl, calendarUrl, username }, secretForDiscovery);
+        const discovered = await testOrDiscoverCalDavConnection({ serverUrl, calendarUrl, username, vendor, calendarId }, secretForDiscovery);
         calendarUrl = discovered.calendarUrl;
       }
       const account = await upsertCalendarProvider(workspace, {
         id,
         type,
+        vendor,
         label,
         serverUrl,
         calendarUrl,
+        calendarId: calendarId || undefined,
         username,
         cutoffDate: cutoffDate || undefined,
         enabled: body?.enabled !== false,
-        secret: password,
-        secretRef: existing?.secretRef,
+        secret: vendor === "google" ? undefined : password,
+        secretRef: vendor === "google" ? undefined : existing?.secretRef,
       });
       return NextResponse.json({
         ok: true,
         provider: {
           ...account,
           secretRef: account.secretRef ? `${account.secretRef.slice(0, 10)}***` : "",
-          hasSecret: true,
+          hasSecret: Boolean(account.secretRef),
         },
       });
     }
@@ -362,14 +436,55 @@ export async function POST(request: NextRequest) {
       const kind = body?.kind === "event" ? "event" : "reminder";
       const title = String(body?.title || "").trim();
       const dueAt = String(body?.dueAt || "").trim();
+      const endAt = String(body?.endAt || "").trim();
+      const saveToProvider = body?.saveToProvider === true;
+      const providerAccountId = String(body?.providerAccountId || "").trim();
       if (!title || !dueAt) {
         return NextResponse.json({ error: "title and dueAt required" }, { status: 400 });
       }
+
+      if (saveToProvider) {
+        if (!providerAccountId) {
+          return NextResponse.json({ error: "providerAccountId required when saveToProvider is enabled" }, { status: 400 });
+        }
+        const providers = await readCalendarProviders(workspace);
+        const account = providers.find((p) => p.id === providerAccountId);
+        if (!account) {
+          return NextResponse.json({ error: "Provider account not found" }, { status: 404 });
+        }
+        const remote = await createCalDavProviderItem(account, {
+          kind,
+          title,
+          notes: typeof body?.notes === "string" ? body.notes : undefined,
+          dueAt,
+          endAt: endAt || undefined,
+        });
+        const created = await upsertCalendarEntry(workspace, {
+          kind,
+          title,
+          notes: typeof body?.notes === "string" ? body.notes : undefined,
+          dueAt,
+          endAt: endAt || undefined,
+          status: "scheduled",
+          source: "provider",
+          provider: account.type,
+          providerAccountId: account.id,
+          externalId: remote.externalId,
+          providerItemUrl: remote.itemUrl,
+          providerEtag: remote.etag,
+          providerComponent: remote.component,
+          providerCalendarUrl: remote.calendarUrl,
+          readOnly: false,
+        });
+        return NextResponse.json({ ok: true, entry: formatEntryForCalendar(created) });
+      }
+
       const created = await upsertCalendarEntry(workspace, {
         kind,
         title,
         notes: typeof body?.notes === "string" ? body.notes : undefined,
         dueAt,
+        endAt: endAt || undefined,
         status: "scheduled",
         source: "manual",
       });
@@ -394,16 +509,68 @@ export async function PATCH(request: NextRequest) {
       title?: string;
       notes?: string;
       dueAt?: string;
+      endAt?: string;
       status?: CalendarEntryStatus;
       previousStatus?: CalendarEntryStatus | null;
+      providerEtag?: string;
     } = {};
     if (typeof body?.title === "string") patch.title = body.title;
     if (typeof body?.notes === "string") patch.notes = body.notes;
     if (typeof body?.dueAt === "string") patch.dueAt = body.dueAt;
+    if (typeof body?.endAt === "string") patch.endAt = body.endAt;
     if (body?.kind === "reminder" || body?.kind === "event") patch.kind = body.kind;
     if (typeof body?.status === "string") patch.status = body.status as CalendarEntryStatus;
     if (body?.previousStatus === null) patch.previousStatus = null;
     if (typeof body?.previousStatus === "string") patch.previousStatus = body.previousStatus as CalendarEntryStatus;
+
+    const entries = await readCalendarEntries(workspace);
+    const current = entries.find((entry) => entry.id === id);
+    if (!current) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    if (current.providerAccountId) {
+      const providers = await readCalendarProviders(workspace);
+      const account = providers.find((p) => p.id === current.providerAccountId);
+      if (!account) return NextResponse.json({ error: "Provider account not found" }, { status: 404 });
+
+      const nextKind = patch.kind ?? current.kind;
+      const nextTitle = patch.title ?? current.title;
+      const nextNotes = patch.notes ?? current.notes;
+      const nextDueAt = patch.dueAt ?? current.dueAt;
+      const nextEndAt = patch.endAt !== undefined ? (patch.endAt || undefined) : current.endAt;
+      const nextStatus = patch.status ?? current.status;
+
+      const remote = await updateCalDavProviderItem(account, current, {
+        kind: nextKind,
+        title: nextTitle,
+        notes: nextNotes,
+        dueAt: nextDueAt,
+        endAt: nextEndAt,
+        status: nextStatus === "done" ? "done" : "scheduled",
+      });
+
+      const updated = await upsertCalendarEntry(workspace, {
+        id: current.id,
+        kind: nextKind,
+        title: nextTitle,
+        notes: nextNotes,
+        dueAt: nextDueAt,
+        endAt: nextEndAt,
+        status: nextStatus,
+        source: "provider",
+        provider: current.provider || "caldav",
+        providerAccountId: current.providerAccountId,
+        externalId: current.externalId,
+        providerItemUrl: remote.itemUrl,
+        providerEtag: remote.etag || current.providerEtag,
+        providerComponent: remote.component,
+        providerCalendarUrl: current.providerCalendarUrl,
+        readOnly: false,
+        deliveredAt: current.deliveredAt,
+        previousStatus: patch.previousStatus === null ? undefined : (patch.previousStatus || current.previousStatus),
+      });
+
+      return NextResponse.json({ ok: true, entry: formatEntryForCalendar(updated) });
+    }
 
     const patched = await patchCalendarEntry(workspace, id, patch);
     if (!patched) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -419,6 +586,18 @@ export async function DELETE(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const id = String(searchParams.get("id") || "").trim();
     if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
+
+    const entries = await readCalendarEntries(workspace);
+    const current = entries.find((entry) => entry.id === id);
+    if (!current) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    if (current.providerAccountId) {
+      const providers = await readCalendarProviders(workspace);
+      const account = providers.find((p) => p.id === current.providerAccountId);
+      if (!account) return NextResponse.json({ error: "Provider account not found" }, { status: 404 });
+      await deleteCalDavProviderItem(account, current);
+    }
+
     const ok = await deleteCalendarEntry(workspace, id);
     if (!ok) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ ok: true });

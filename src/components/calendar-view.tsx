@@ -16,6 +16,7 @@ import {
   Trash2,
   X,
   RefreshCw,
+  Plus,
 } from "lucide-react";
 import { SectionLayout } from "@/components/section-layout";
 import { LoadingState } from "@/components/ui/loading-state";
@@ -29,6 +30,7 @@ type CalendarEntry = {
   title: string;
   notes?: string;
   dueAt: string;
+  endAt?: string;
   day: string;
   status: "scheduled" | "sent" | "done" | "cancelled" | "failed";
   previousStatus?: "scheduled" | "sent" | "cancelled" | "failed";
@@ -41,9 +43,11 @@ type CalendarEntry = {
 type ProviderAccount = {
   id: string;
   type: "caldav";
+  vendor?: "icloud" | "google";
   label: string;
   serverUrl: string;
   calendarUrl: string;
+  calendarId?: string;
   username: string;
   cutoffDate?: string;
   enabled: boolean;
@@ -72,6 +76,13 @@ type ApiPayload = {
   taskDue: TaskDue[];
   upcoming: CalendarItem[];
   providers?: ProviderAccount[];
+  googleOAuth?: {
+    configured: boolean;
+    connected?: boolean;
+    tokenExpiresAt?: string;
+    clientId?: string;
+    redirectUri?: string;
+  };
 };
 
 type PendingAction =
@@ -102,6 +113,15 @@ function formatTimeOnly(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function formatTimeRange(startIso: string, endIso?: string): string {
+  const start = formatTimeOnly(startIso);
+  if (!start) return "";
+  if (!endIso) return start;
+  const end = formatTimeOnly(endIso);
+  if (!end) return start;
+  return `${start} - ${end}`;
 }
 
 function truncateTitle(value: string, max = 34): string {
@@ -162,7 +182,7 @@ function badgeForType(type: CalendarItem["type"]): { label: string; className: s
   if (type === "event") {
     return {
       label: "Event",
-      className: "border-cyan-500/30 bg-cyan-500/10 text-cyan-300",
+      className: "border-blue-500/30 bg-blue-500/15 text-blue-200",
       Icon: CalendarClock,
     };
   }
@@ -173,13 +193,21 @@ function badgeForType(type: CalendarItem["type"]): { label: string; className: s
   };
 }
 
-function badgeForItem(item: CalendarItem, accountLabelById?: Record<string, string>): { label: string; className: string; Icon: typeof Bell } {
+function badgeForItem(
+  item: CalendarItem,
+  accountLabelById?: Record<string, string>,
+  accountVendorById?: Record<string, "icloud" | "google">
+): { label: string; className: string; Icon: typeof Bell } {
   const base = badgeForType(item.type);
   if (item.type !== "task" && (item.source === "provider" || item.readOnly)) {
     const accountLabel = item.providerAccountId ? accountLabelById?.[item.providerAccountId] : undefined;
+    const accountVendor = item.providerAccountId ? accountVendorById?.[item.providerAccountId] : undefined;
+    const providerClassName = accountVendor === "google"
+      ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-200"
+      : "border-pink-500/30 bg-pink-500/15 text-pink-200";
     return {
       label: accountLabel || (item.provider === "caldav" ? "CalDAV" : "Imported"),
-      className: "border-pink-500/30 bg-pink-500/15 text-pink-200",
+      className: providerClassName,
       Icon: base.Icon,
     };
   }
@@ -200,10 +228,16 @@ export function CalendarView() {
   const [payload, setPayload] = useState<ApiPayload | null>(null);
   const [viewDate, setViewDate] = useState(() => new Date());
   const [viewMode, setViewMode] = useState<"month" | "week">("month");
-  const [newTitle, setNewTitle] = useState("");
-  const [newNotes, setNewNotes] = useState("");
-  const [newDueAt, setNewDueAt] = useState("");
-  const [newKind, setNewKind] = useState<"reminder" | "event">("reminder");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createTitle, setCreateTitle] = useState("");
+  const [createNotes, setCreateNotes] = useState("");
+  const [createDueAt, setCreateDueAt] = useState("");
+  const [createEndAt, setCreateEndAt] = useState("");
+  const [createKind, setCreateKind] = useState<"reminder" | "event">("reminder");
+  const [createSaveToProvider, setCreateSaveToProvider] = useState(false);
+  const [createProviderId, setCreateProviderId] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
   const [openInfoKey, setOpenInfoKey] = useState<string | null>(null);
@@ -211,6 +245,7 @@ export function CalendarView() {
   const [editTitle, setEditTitle] = useState("");
   const [editNotes, setEditNotes] = useState("");
   const [editDueAt, setEditDueAt] = useState("");
+  const [editEndAt, setEditEndAt] = useState("");
   const [editKind, setEditKind] = useState<"reminder" | "event">("reminder");
   const [savingEdit, setSavingEdit] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
@@ -224,34 +259,70 @@ export function CalendarView() {
   const [providerRowMessage, setProviderRowMessage] = useState<Record<string, { type: "ok" | "err"; text: string }>>({});
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
   const [editingProvider, setEditingProvider] = useState<{
+    vendor: "icloud" | "google";
     label: string;
     serverUrl: string;
     calendarUrl: string;
+    calendarId: string;
     username: string;
     cutoffDate: string;
     password: string;
-  }>({ label: "", serverUrl: "", calendarUrl: "", username: "", cutoffDate: "", password: "" });
+  }>({ vendor: "icloud", label: "", serverUrl: "", calendarUrl: "", calendarId: "", username: "", cutoffDate: "", password: "" });
   const [providerEditSaving, setProviderEditSaving] = useState(false);
   const [hiddenProviderAccountIds, setHiddenProviderAccountIds] = useState<Set<string>>(new Set());
   const [purgeConfirmProviderId, setPurgeConfirmProviderId] = useState<string | null>(null);
   const [purgingProviderId, setPurgingProviderId] = useState<string | null>(null);
+  const [googleClientFileName, setGoogleClientFileName] = useState("");
+  const [googleClientImporting, setGoogleClientImporting] = useState(false);
   const [providerForm, setProviderForm] = useState({
     label: "",
     serverUrl: "https://caldav.icloud.com",
     calendarUrl: "",
+    calendarId: "",
     username: "",
     password: "",
     cutoffDate: "",
   });
 
+  const googleCallbackUri = "http://127.0.0.1:3333/api/calendar/google/callback";
+
   const tab = (searchParams.get("tab") || "").toLowerCase();
   const providerTabActive = tab === "providers";
+  const googleOAuthQuery = (searchParams.get("google") || "").toLowerCase();
+
+  useEffect(() => {
+    if (!providerTabActive) return;
+    if (googleOAuthQuery === "connected" || googleOAuthQuery === "oauth-error") {
+      setProviderPreset("google");
+    }
+  }, [googleOAuthQuery, providerTabActive]);
 
   const accountLabelById = useMemo(() => {
     const map: Record<string, string> = {};
     for (const p of payload?.providers || []) map[p.id] = p.label;
     return map;
   }, [payload?.providers]);
+
+  const accountVendorById = useMemo(() => {
+    const map: Record<string, "icloud" | "google"> = {};
+    for (const p of payload?.providers || []) map[p.id] = p.vendor === "google" ? "google" : "icloud";
+    return map;
+  }, [payload?.providers]);
+
+  const enabledProviders = useMemo(() => {
+    return (payload?.providers || []).filter((provider) => provider.enabled);
+  }, [payload?.providers]);
+
+  const resetCreateForm = useCallback(() => {
+    setCreateTitle("");
+    setCreateNotes("");
+    setCreateDueAt("");
+    setCreateEndAt("");
+    setCreateKind("reminder");
+    setCreateSaveToProvider(false);
+    setCreateProviderId("");
+    setCreateError(null);
+  }, []);
 
   const refresh = useCallback(async () => {
     const res = await fetch("/api/calendar", { cache: "no-store" });
@@ -373,35 +444,52 @@ export function CalendarView() {
   }, [viewDate]);
 
   const createItem = useCallback(async () => {
-    if (!newTitle.trim() || !newDueAt.trim()) return;
+    if (!createTitle.trim() || !createDueAt.trim()) return;
+    if (createSaveToProvider && !createProviderId) {
+      setCreateError("Select a provider account before creating.");
+      return;
+    }
     setSaving(true);
+    setCreateError(null);
     try {
-      await fetch("/api/calendar", {
+      const res = await fetch("/api/calendar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "create",
-          kind: newKind,
-          title: newTitle.trim(),
-          notes: newNotes.trim() || undefined,
-          dueAt: newDueAt,
+          kind: createKind,
+          title: createTitle.trim(),
+          notes: createNotes.trim() || undefined,
+          dueAt: createDueAt,
+          endAt: createKind === "event" && createEndAt.trim() ? createEndAt : undefined,
+          saveToProvider: createSaveToProvider,
+          providerAccountId: createSaveToProvider ? createProviderId : undefined,
         }),
       });
-      setNewTitle("");
-      setNewNotes("");
-      setNewDueAt("");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.ok === false) {
+        throw new Error(data?.error || `Create failed (${res.status})`);
+      }
+      resetCreateForm();
+      setCreateOpen(false);
       await refresh();
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
     }
-  }, [newDueAt, newKind, newNotes, newTitle, refresh]);
+  }, [createDueAt, createEndAt, createKind, createNotes, createProviderId, createSaveToProvider, createTitle, refresh, resetCreateForm]);
 
   const patchEntry = useCallback(async (id: string, patch: Record<string, unknown>) => {
-    await fetch("/api/calendar", {
+    const res = await fetch("/api/calendar", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, ...patch }),
     });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.ok === false) {
+      throw new Error(data?.error || `Update failed (${res.status})`);
+    }
     await refresh();
   }, [refresh]);
 
@@ -433,10 +521,12 @@ export function CalendarView() {
         body: JSON.stringify({
           action: "provider-test",
           type: "caldav",
+          vendor: providerPreset,
           serverUrl: providerForm.serverUrl,
           calendarUrl: providerForm.calendarUrl,
+          calendarId: providerPreset === "google" ? providerForm.calendarId || providerForm.username : "",
           username: providerForm.username,
-          password: providerForm.password,
+          password: providerPreset === "google" ? "" : providerForm.password,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -452,10 +542,11 @@ export function CalendarView() {
     } finally {
       setProviderTesting(false);
     }
-  }, [providerForm.calendarUrl, providerForm.password, providerForm.serverUrl, providerForm.username]);
+  }, [providerForm.calendarId, providerForm.calendarUrl, providerForm.password, providerForm.serverUrl, providerForm.username, providerPreset]);
 
   const saveProvider = useCallback(async () => {
-    if (!providerForm.label.trim() || !providerForm.serverUrl.trim() || !providerForm.username.trim() || !providerForm.password.trim()) return;
+    if (!providerForm.label.trim() || !providerForm.serverUrl.trim() || !providerForm.username.trim()) return;
+    if (providerPreset !== "google" && !providerForm.password.trim()) return;
     setProviderSaving(true);
     setProviderMessage(null);
     try {
@@ -465,11 +556,13 @@ export function CalendarView() {
         body: JSON.stringify({
           action: "provider-add",
           type: "caldav",
+          vendor: providerPreset,
           label: providerForm.label,
           serverUrl: providerForm.serverUrl,
           calendarUrl: providerForm.calendarUrl,
+          calendarId: providerPreset === "google" ? providerForm.calendarId || providerForm.username : "",
           username: providerForm.username,
-          password: providerForm.password,
+          password: providerPreset === "google" ? "" : providerForm.password,
           cutoffDate: providerForm.cutoffDate || undefined,
           enabled: true,
         }),
@@ -478,7 +571,7 @@ export function CalendarView() {
       if (!res.ok || data?.ok === false) {
         throw new Error(data?.error || `Save failed (${res.status})`);
       }
-      setProviderForm((p) => ({ ...p, password: "", label: "", calendarUrl: "", cutoffDate: "" }));
+      setProviderForm((p) => ({ ...p, password: "", label: "", calendarUrl: "", calendarId: "", cutoffDate: "" }));
       setProviderMessage({ type: "ok", text: "Provider saved." });
       await refresh();
     } catch (err) {
@@ -486,7 +579,59 @@ export function CalendarView() {
     } finally {
       setProviderSaving(false);
     }
-  }, [providerForm, refresh]);
+  }, [providerForm, providerPreset, refresh]);
+
+  const importGoogleOAuthClientFile = useCallback(async (file: File | null) => {
+    if (!file) return;
+    setGoogleClientFileName(file.name);
+    setGoogleClientImporting(true);
+    setProviderMessage(null);
+    try {
+      const raw = await file.text();
+      const parsed = JSON.parse(raw) as {
+        web?: {
+          client_id?: string;
+          client_secret?: string;
+          redirect_uris?: string[];
+        };
+      };
+
+      const clientId = String(parsed?.web?.client_id || "").trim();
+      const clientSecret = String(parsed?.web?.client_secret || "").trim();
+      const redirectUris = Array.isArray(parsed?.web?.redirect_uris) ? parsed.web.redirect_uris : [];
+      if (!clientId || !clientSecret) {
+        throw new Error("Invalid client_secret.json: expected web.client_id and web.client_secret.");
+      }
+
+      const hasCallback = redirectUris.includes(googleCallbackUri);
+      const res = await fetch("/api/calendar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "google-oauth-config-set",
+          clientId,
+          clientSecret,
+          redirectUri: googleCallbackUri,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.ok === false) {
+        throw new Error(data?.error || `Import failed (${res.status})`);
+      }
+
+      setProviderMessage({
+        type: "ok",
+        text: hasCallback
+          ? "Google OAuth client imported and saved to OpenClaw secrets."
+          : "Google OAuth client imported to OpenClaw secrets. Add the callback URI in Google Console redirect URIs before connecting.",
+      });
+      await refresh();
+    } catch (err) {
+      setProviderMessage({ type: "err", text: String(err instanceof Error ? err.message : err) });
+    } finally {
+      setGoogleClientImporting(false);
+    }
+  }, [refresh]);
 
   const syncProvider = useCallback(async (accountId: string) => {
     setProviderSyncingId(accountId);
@@ -557,9 +702,11 @@ export function CalendarView() {
   const startEditProvider = useCallback((provider: ProviderAccount) => {
     setEditingProviderId(provider.id);
     setEditingProvider({
+      vendor: provider.vendor === "google" ? "google" : "icloud",
       label: provider.label,
       serverUrl: provider.serverUrl,
       calendarUrl: provider.calendarUrl,
+      calendarId: provider.calendarId || "",
       username: provider.username,
       cutoffDate: toDateInputValue(provider.cutoffDate),
       password: "",
@@ -578,9 +725,11 @@ export function CalendarView() {
           action: "provider-add",
           id: provider.id,
           type: provider.type,
+          vendor: editingProvider.vendor,
           label: nextLabel,
           serverUrl: editingProvider.serverUrl,
           calendarUrl: editingProvider.calendarUrl,
+          calendarId: editingProvider.vendor === "google" ? editingProvider.calendarId || editingProvider.username : "",
           username: editingProvider.username,
           password: editingProvider.password,
           cutoffDate: editingProvider.cutoffDate || undefined,
@@ -592,7 +741,7 @@ export function CalendarView() {
         throw new Error(data?.error || `Update failed (${res.status})`);
       }
       setEditingProviderId(null);
-      setEditingProvider({ label: "", serverUrl: "", calendarUrl: "", username: "", cutoffDate: "", password: "" });
+      setEditingProvider({ vendor: "icloud", label: "", serverUrl: "", calendarUrl: "", calendarId: "", username: "", cutoffDate: "", password: "" });
       await refresh();
     } finally {
       setProviderEditSaving(false);
@@ -606,7 +755,6 @@ export function CalendarView() {
 
   const requestToggleComplete = useCallback((item: CalendarItem) => {
     if (item.type === "task") return;
-    if (item.source === "provider" || item.readOnly) return;
     setPendingAction({ type: isCompletedItem(item) ? "undo" : "complete", item });
   }, [isCompletedItem]);
 
@@ -623,6 +771,7 @@ export function CalendarView() {
       return;
     }
     setRunningAction(true);
+    setCalendarError(null);
     try {
       if (type === "complete") {
         await patchEntry(item.id, { status: "done", previousStatus: item.status });
@@ -630,10 +779,16 @@ export function CalendarView() {
         const restoreStatus = item.previousStatus || "scheduled";
         await patchEntry(item.id, { status: restoreStatus, previousStatus: null });
       } else {
-        await fetch(`/api/calendar?id=${encodeURIComponent(item.id)}`, { method: "DELETE" });
+        const res = await fetch(`/api/calendar?id=${encodeURIComponent(item.id)}`, { method: "DELETE" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data?.ok === false) {
+          throw new Error(data?.error || `Delete failed (${res.status})`);
+        }
         await refresh();
       }
       setPendingAction(null);
+    } catch (err) {
+      setCalendarError(err instanceof Error ? err.message : String(err));
     } finally {
       setRunningAction(false);
     }
@@ -641,11 +796,11 @@ export function CalendarView() {
 
   const openEditModal = useCallback((item: CalendarItem) => {
     if (item.type === "task") return;
-    if (item.source === "provider" || item.readOnly) return;
     setEditItemId(item.id);
     setEditTitle(item.title);
     setEditNotes(item.notes || "");
     setEditDueAt(toDateTimeLocalValue(item.dueAt));
+    setEditEndAt(item.type === "event" ? toDateTimeLocalValue(item.endAt || "") : "");
     setEditKind(item.type);
   }, []);
 
@@ -655,6 +810,7 @@ export function CalendarView() {
     setEditTitle("");
     setEditNotes("");
     setEditDueAt("");
+    setEditEndAt("");
     setEditKind("reminder");
   }, [savingEdit]);
 
@@ -663,18 +819,22 @@ export function CalendarView() {
     const trimmed = editTitle.trim();
     if (!trimmed || !editDueAt.trim()) return;
     setSavingEdit(true);
+    setCalendarError(null);
     try {
       await patchEntry(editItemId, {
         title: trimmed,
         notes: editNotes.trim() || undefined,
         dueAt: editDueAt,
+        endAt: editKind === "event" && editEndAt.trim() ? editEndAt : "",
         kind: editKind,
       });
       closeEditModal();
+    } catch (err) {
+      setCalendarError(err instanceof Error ? err.message : String(err));
     } finally {
       setSavingEdit(false);
     }
-  }, [closeEditModal, editDueAt, editItemId, editKind, editNotes, editTitle, patchEntry]);
+  }, [closeEditModal, editDueAt, editEndAt, editItemId, editKind, editNotes, editTitle, patchEntry]);
 
   const itemScopedKey = useCallback((scope: "month" | "week" | "upcoming", id: string) => {
     return `${scope}:${id}`;
@@ -682,11 +842,10 @@ export function CalendarView() {
 
   const renderItemControls = useCallback((item: CalendarItem, scope: "month" | "week" | "upcoming") => {
     if (item.type === "task") return null;
-    const isProviderReadOnly = item.source === "provider" || item.readOnly;
     const key = itemScopedKey(scope, item.id);
     const infoOpen = openInfoKey === key;
     const menuOpen = openMenuKey === key;
-    const badge = badgeForItem(item, accountLabelById);
+    const badge = badgeForItem(item, accountLabelById, accountVendorById);
 
     return (
       <div className="relative flex items-center gap-0.5" data-calendar-floating="true">
@@ -745,11 +904,10 @@ export function CalendarView() {
                 setOpenMenuKey(null);
                 openEditModal(item);
               }}
-              disabled={isProviderReadOnly}
               className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs text-foreground/90 outline-none ring-0 hover:bg-foreground/10 focus:outline-none focus-visible:outline-none focus-visible:ring-0"
             >
               <Pencil className="h-3 w-3" />
-              {isProviderReadOnly ? "Read-only" : "Edit"}
+              Edit
             </button>
             <button
               type="button"
@@ -757,7 +915,6 @@ export function CalendarView() {
                 setOpenMenuKey(null);
                 requestToggleComplete(item);
               }}
-              disabled={isProviderReadOnly}
               className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs text-emerald-300 outline-none ring-0 hover:bg-emerald-500/10 focus:outline-none focus-visible:outline-none focus-visible:ring-0"
             >
               <Check className="h-3 w-3" />
@@ -772,14 +929,14 @@ export function CalendarView() {
               className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs text-red-300 outline-none ring-0 hover:bg-red-500/10 focus:outline-none focus-visible:outline-none focus-visible:ring-0"
             >
               <Trash2 className="h-3 w-3" />
-              {isProviderReadOnly ? "Delete local" : "Delete"}
+              Delete
             </button>
           </div>
           )}
         </div>
       </div>
     );
-  }, [accountLabelById, isCompletedItem, itemScopedKey, openEditModal, openInfoKey, openMenuKey, requestDelete, requestToggleComplete]);
+  }, [accountLabelById, accountVendorById, isCompletedItem, itemScopedKey, openEditModal, openInfoKey, openMenuKey, requestDelete, requestToggleComplete]);
 
   if (loading) return <LoadingState label="Loading calendar..." />;
 
@@ -842,84 +999,98 @@ export function CalendarView() {
               </button>
             </div>
             )}
-            <button
-              type="button"
-              onClick={() => void manualRefresh()}
-              disabled={refreshing}
-              className="inline-flex items-center gap-1 rounded-md border border-foreground/10 px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-60"
-              aria-label="Refresh calendar"
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
-              {refreshing ? "Refreshing" : "Refresh"}
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                setViewDate((d) =>
-                  viewMode === "month"
-                    ? new Date(d.getFullYear(), d.getMonth() - 1, 1)
-                    : new Date(d.getFullYear(), d.getMonth(), d.getDate() - 7)
-                )
-              }
-              className="rounded-md border border-foreground/10 p-1.5 text-muted-foreground hover:text-foreground"
-              aria-label="Previous month"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <span className="min-w-40 text-center text-sm font-medium text-foreground">
-              {viewMode === "month" ? monthLabel(viewDate) : weekLabel(viewDate)}
-            </span>
-            <button
-              type="button"
-              onClick={() =>
-                setViewDate((d) =>
-                  viewMode === "month"
-                    ? new Date(d.getFullYear(), d.getMonth() + 1, 1)
-                    : new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7)
-                )
-              }
-              className="rounded-md border border-foreground/10 p-1.5 text-muted-foreground hover:text-foreground"
-              aria-label="Next month"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
+            {!providerTabActive && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void manualRefresh()}
+                  disabled={refreshing}
+                  className="inline-flex items-center gap-1 rounded-md border border-foreground/10 px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-60"
+                  aria-label="Refresh calendar"
+                >
+                  <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+                  {refreshing ? "Refreshing" : "Refresh"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setViewDate((d) =>
+                      viewMode === "month"
+                        ? new Date(d.getFullYear(), d.getMonth() - 1, 1)
+                        : new Date(d.getFullYear(), d.getMonth(), d.getDate() - 7)
+                    )
+                  }
+                  className="rounded-md border border-foreground/10 p-1.5 text-muted-foreground hover:text-foreground"
+                  aria-label="Previous month"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <span className="min-w-40 text-center text-sm font-medium text-foreground">
+                  {viewMode === "month" ? monthLabel(viewDate) : weekLabel(viewDate)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setViewDate((d) =>
+                      viewMode === "month"
+                        ? new Date(d.getFullYear(), d.getMonth() + 1, 1)
+                        : new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7)
+                    )
+                  }
+                  className="rounded-md border border-foreground/10 p-1.5 text-muted-foreground hover:text-foreground"
+                  aria-label="Next month"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </>
+            )}
           </div>
         </div>
 
         {!providerTabActive && (
-        <div className="mt-3 grid gap-2 md:grid-cols-[1fr_1fr_220px_180px_140px]">
-          <input
-            value={newTitle}
-            onChange={(e) => setNewTitle(e.target.value)}
-            placeholder="Add reminder or event title"
-            className={CALENDAR_INPUT_CLASS}
-          />
-          <input
-            value={newNotes}
-            onChange={(e) => setNewNotes(e.target.value)}
-            placeholder="Brief description (optional)"
-            className={CALENDAR_INPUT_CLASS}
-          />
-          <DateTimePicker
-            value={newDueAt}
-            onChange={setNewDueAt}
-            placeholder="Pick date & time"
-          />
-          <ThemedSelect
-            value={newKind}
-            onChange={(value) => setNewKind(value === "event" ? "event" : "reminder")}
-            options={[{ value: "reminder", label: "Reminder" }, { value: "event", label: "Event" }]}
-            className="w-full"
-          />
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+          {(payload?.providers || []).map((provider) => {
+            const hidden = hiddenProviderAccountIds.has(provider.id);
+            const providerClassName = provider.vendor === "google"
+              ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-200"
+              : "border-pink-500/30 bg-pink-500/15 text-pink-200";
+            return (
+              <button
+                key={provider.id}
+                type="button"
+                onClick={() => {
+                  setHiddenProviderAccountIds((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(provider.id)) next.delete(provider.id);
+                    else next.add(provider.id);
+                    return next;
+                  });
+                }}
+                className={cn(
+                  "rounded-full border px-2 py-0.5 text-xs transition-colors",
+                  hidden
+                    ? "border-foreground/20 bg-background/60 text-muted-foreground"
+                    : providerClassName
+                )}
+              >
+                {hidden ? "Show" : "Hide"} {provider.label}
+              </button>
+            );
+          })}
+          </div>
           <button
             type="button"
-            onClick={() => void createItem()}
-            disabled={saving || !newTitle.trim() || !newDueAt.trim()}
-            className="rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs font-medium text-sky-300 disabled:opacity-60"
+            onClick={() => setCreateOpen(true)}
+            className="inline-flex items-center gap-1 rounded-md border border-sky-500/30 bg-sky-500/10 px-2.5 py-1.5 text-xs font-medium text-sky-200 hover:bg-sky-500/20"
           >
-            {saving ? "Adding..." : "Add"}
+            <Plus className="h-3.5 w-3.5" />
+            Create
           </button>
         </div>
+        )}
+        {!providerTabActive && calendarError && (
+          <p className="mt-2 text-xs text-red-300">{calendarError}</p>
         )}
       </div>
 
@@ -931,7 +1102,15 @@ export function CalendarView() {
               <div className="mt-2 inline-flex items-center rounded-md border border-foreground/10 bg-background/70 p-0.5">
                 <button
                   type="button"
-                  onClick={() => setProviderPreset("icloud")}
+                  onClick={() => {
+                    setProviderPreset("icloud");
+                    setProviderForm((prev) => ({
+                      ...prev,
+                      serverUrl: "https://caldav.icloud.com",
+                      calendarUrl: "",
+                      calendarId: "",
+                    }));
+                  }}
                   className={cn(
                     "rounded px-2 py-1 text-xs transition-colors",
                     providerPreset === "icloud" ? "bg-sky-300/20 text-sky-100" : "text-muted-foreground hover:text-foreground"
@@ -941,7 +1120,14 @@ export function CalendarView() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setProviderPreset("google")}
+                  onClick={() => {
+                    setProviderPreset("google");
+                    setProviderForm((prev) => ({
+                      ...prev,
+                      serverUrl: "https://apidata.googleusercontent.com/caldav/v2",
+                      calendarUrl: "",
+                    }));
+                  }}
                   className={cn(
                     "rounded px-2 py-1 text-xs transition-colors",
                     providerPreset === "google" ? "bg-sky-300/20 text-sky-100" : "text-muted-foreground hover:text-foreground"
@@ -951,24 +1137,79 @@ export function CalendarView() {
                 </button>
               </div>
 
-              {providerPreset === "google" ? (
-                <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
-                  Google Calendar provider UI is coming soon in a later version.
-                  <div className="mt-2 text-amber-100/90">
-                    Planned required fields: Google account email, app-specific password, and calendar collection URL.
-                  </div>
-                </div>
-              ) : (
               <>
               <div className="mt-1 space-y-1 text-xs text-muted-foreground/80">
-                <p>iCloud quick setup:</p>
-                <p>- Server: <code className="rounded bg-foreground/10 px-1">https://caldav.icloud.com</code></p>
-                <p>- Username: your Apple ID</p>
-                <p>- Password: Apple app-specific password</p>
-                <p>- Calendar URL: optional (auto-discovered)</p>
-                <p>Note: iCloud/Apple Reminders are not imported in this version (events only).</p>
+                {providerPreset === "icloud" ? (
+                  <>
+                    <p>iCloud quick setup:</p>
+                    <p>- Server: <code className="rounded bg-foreground/10 px-1">https://caldav.icloud.com</code></p>
+                    <p>- Username: your Apple ID</p>
+                    <p>- Password: Apple app-specific password</p>
+                    <p>- Calendar URL: optional (auto-discovered)</p>
+                    <p>Note: iCloud/Apple Reminders are not imported in this version (events only).</p>
+                  </>
+                ) : (
+                  <>
+                    <p>Google CalDAV quick setup:</p>
+                    <p>- Server: <code className="rounded bg-foreground/10 px-1">https://apidata.googleusercontent.com/caldav/v2</code></p>
+                    <p>- Auth: OAuth 2.0 required by Google</p>
+                    <p>- Upload Google <code className="rounded bg-foreground/10 px-1">client_secret.json</code> to store client credentials in OpenClaw secrets</p>
+                    <p>- Calendar ID: optional, defaults to your account email (primary calendar)</p>
+                    <p>- Callback URI: <code className="rounded bg-foreground/10 px-1">{googleCallbackUri}</code></p>
+                    <p>Note: OAuth connect/sync flow is the next step after uploading client credentials.</p>
+                  </>
+                )}
                 <p>Read-only import. Password is encrypted and stored under OpenClaw credentials.</p>
               </div>
+              {providerPreset === "google" && (
+                <div className="mt-3 rounded-md border border-sky-500/25 bg-sky-500/10 p-3">
+                  <p className="text-xs text-sky-100/90">
+                    OAuth client status: {payload?.googleOAuth?.configured ? "Configured" : "Not configured"}
+                  </p>
+                  <p className="mt-1 text-xs text-sky-100/90">
+                    OAuth connection: {payload?.googleOAuth?.connected ? "Connected" : "Not connected"}
+                  </p>
+                  {payload?.googleOAuth?.tokenExpiresAt && (
+                    <p className="mt-1 text-[11px] text-sky-100/80">Access token expires: {formatDateTime(payload.googleOAuth.tokenExpiresAt)}</p>
+                  )}
+                  {payload?.googleOAuth?.clientId && (
+                    <p className="mt-1 text-[11px] text-sky-100/80">Client ID: {payload.googleOAuth.clientId}</p>
+                  )}
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <a
+                      href="/api/calendar/google/start"
+                      className={cn(
+                        "rounded-md border border-sky-500/30 bg-background/40 px-3 py-1.5 text-xs text-sky-100/90 hover:bg-background/60",
+                        !payload?.googleOAuth?.configured && "pointer-events-none opacity-60"
+                      )}
+                    >
+                      {payload?.googleOAuth?.connected ? "Reconnect Google" : "Connect Google"}
+                    </a>
+                  </div>
+                  {googleOAuthQuery === "connected" && (
+                    <p className="mt-2 text-xs text-emerald-300">Google OAuth connected successfully.</p>
+                  )}
+                  {googleOAuthQuery === "oauth-error" && (
+                    <p className="mt-2 text-xs text-red-300">Google OAuth connection failed. Check the callback URI and try again.</p>
+                  )}
+                  <label className="mt-2 inline-flex cursor-pointer items-center gap-2 rounded-md border border-sky-500/30 bg-background/40 px-3 py-1.5 text-xs text-sky-100/90 hover:bg-background/60">
+                    <input
+                      type="file"
+                      accept="application/json,.json"
+                      className="hidden"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0] || null;
+                        void importGoogleOAuthClientFile(file);
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                    {googleClientImporting ? "Importing..." : "Upload client_secret.json"}
+                  </label>
+                  {googleClientFileName && (
+                    <p className="mt-1 text-[11px] text-sky-100/80">Last file: {googleClientFileName}</p>
+                  )}
+                </div>
+              )}
               <div className="mt-3 grid items-start gap-3 md:grid-cols-2">
                 <label className="min-w-0 space-y-1 text-xs text-muted-foreground">
                   <span>Account label</span>
@@ -993,29 +1234,42 @@ export function CalendarView() {
                   <input
                     value={providerForm.calendarUrl}
                     onChange={(e) => setProviderForm((p) => ({ ...p, calendarUrl: e.target.value }))}
-                    placeholder="Auto-discovered when empty"
+                    placeholder={providerPreset === "google" ? "Optional override (advanced)" : "Auto-discovered when empty"}
                     className={PROVIDER_INPUT_CLASS}
                   />
                 </label>
+                {providerPreset === "google" && (
+                  <label className="min-w-0 space-y-1 text-xs text-muted-foreground">
+                    <span>Calendar ID (optional)</span>
+                    <input
+                      value={providerForm.calendarId}
+                      onChange={(e) => setProviderForm((p) => ({ ...p, calendarId: e.target.value }))}
+                      placeholder="Defaults to account email"
+                      className={PROVIDER_INPUT_CLASS}
+                    />
+                  </label>
+                )}
                 <label className="min-w-0 space-y-1 text-xs text-muted-foreground">
-                  <span>Username / Apple ID</span>
+                  <span>{providerPreset === "google" ? "Username / Google account" : "Username / Apple ID"}</span>
                   <input
                     value={providerForm.username}
                     onChange={(e) => setProviderForm((p) => ({ ...p, username: e.target.value }))}
-                    placeholder="you@icloud.com"
+                    placeholder={providerPreset === "google" ? "you@gmail.com" : "you@icloud.com"}
                     className={PROVIDER_INPUT_CLASS}
                   />
                 </label>
-                <label className="min-w-0 space-y-1 text-xs text-muted-foreground">
-                  <span>App-specific password</span>
-                  <input
-                    type="password"
-                    value={providerForm.password}
-                    onChange={(e) => setProviderForm((p) => ({ ...p, password: e.target.value }))}
-                    placeholder="xxxx-xxxx-xxxx-xxxx"
-                    className={PROVIDER_INPUT_CLASS}
-                  />
-                </label>
+                {providerPreset !== "google" && (
+                  <label className="min-w-0 space-y-1 text-xs text-muted-foreground">
+                    <span>Apple app-specific password</span>
+                    <input
+                      type="password"
+                      value={providerForm.password}
+                      onChange={(e) => setProviderForm((p) => ({ ...p, password: e.target.value }))}
+                      placeholder="xxxx-xxxx-xxxx-xxxx"
+                      className={PROVIDER_INPUT_CLASS}
+                    />
+                  </label>
+                )}
                 <label className="min-w-0 space-y-1 text-xs text-muted-foreground">
                   <span>Cut-off date (optional)</span>
                   <input
@@ -1031,7 +1285,7 @@ export function CalendarView() {
                 <button
                   type="button"
                   onClick={() => void testProvider()}
-                  disabled={providerTesting}
+                  disabled={providerTesting || (providerPreset === "google" && !payload?.googleOAuth?.connected)}
                   className="rounded-md border border-foreground/10 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-60"
                 >
                   {providerTesting ? "Testing..." : "Test"}
@@ -1039,14 +1293,13 @@ export function CalendarView() {
                 <button
                   type="button"
                   onClick={() => void saveProvider()}
-                  disabled={providerSaving}
+                  disabled={providerSaving || (providerPreset === "google" && !payload?.googleOAuth?.connected)}
                   className="rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-xs font-medium text-sky-300 disabled:opacity-60"
                 >
                   {providerSaving ? "Saving..." : "Save Provider"}
                 </button>
               </div>
               </>
-              )}
               {providerMessage && (
                 <p className={cn("mt-2 text-xs", providerMessage.type === "ok" ? "text-emerald-300" : "text-red-300")}>{providerMessage.text}</p>
               )}
@@ -1070,6 +1323,35 @@ export function CalendarView() {
                     {editingProviderId === provider.id ? (
                       <div className="min-w-0 flex-1 space-y-2">
                         <div className="grid items-start gap-3 md:grid-cols-2">
+                          <label className="min-w-0 space-y-1 text-xs text-muted-foreground">
+                            <span>Provider vendor</span>
+                            <div className="inline-flex items-center rounded-md border border-foreground/10 bg-background/70 p-0.5">
+                              <button
+                                type="button"
+                                onClick={() => setEditingProvider((prev) => ({ ...prev, vendor: "icloud", serverUrl: "https://caldav.icloud.com", calendarId: "" }))}
+                                className={cn(
+                                  "rounded px-2 py-1 text-xs transition-colors",
+                                  editingProvider.vendor === "icloud"
+                                    ? "bg-sky-300/20 text-sky-100"
+                                    : "text-muted-foreground hover:text-foreground"
+                                )}
+                              >
+                                iCloud
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingProvider((prev) => ({ ...prev, vendor: "google", serverUrl: "https://apidata.googleusercontent.com/caldav/v2" }))}
+                                className={cn(
+                                  "rounded px-2 py-1 text-xs transition-colors",
+                                  editingProvider.vendor === "google"
+                                    ? "bg-sky-300/20 text-sky-100"
+                                    : "text-muted-foreground hover:text-foreground"
+                                )}
+                              >
+                                Google
+                              </button>
+                            </div>
+                          </label>
                           <label className="min-w-0 space-y-1 text-xs text-muted-foreground">
                             <span>Account label</span>
                             <input
@@ -1106,6 +1388,17 @@ export function CalendarView() {
                               className={PROVIDER_INPUT_CLASS}
                             />
                           </label>
+                          {editingProvider.vendor === "google" && (
+                            <label className="min-w-0 space-y-1 text-xs text-muted-foreground">
+                              <span>Calendar ID (optional)</span>
+                              <input
+                                value={editingProvider.calendarId}
+                                onChange={(e) => setEditingProvider((prev) => ({ ...prev, calendarId: e.target.value }))}
+                                placeholder="Defaults to account email"
+                                className={PROVIDER_INPUT_CLASS}
+                              />
+                            </label>
+                          )}
                           <label className="min-w-0 space-y-1 text-xs text-muted-foreground">
                             <span>Username</span>
                             <input
@@ -1139,7 +1432,7 @@ export function CalendarView() {
                           type="button"
                           onClick={() => {
                             setEditingProviderId(null);
-                            setEditingProvider({ label: "", serverUrl: "", calendarUrl: "", username: "", cutoffDate: "", password: "" });
+                            setEditingProvider({ vendor: "icloud", label: "", serverUrl: "", calendarUrl: "", calendarId: "", username: "", cutoffDate: "", password: "" });
                           }}
                           className="rounded border border-foreground/20 bg-background/60 px-2 py-0.5 text-[11px] text-muted-foreground"
                         >
@@ -1207,39 +1500,6 @@ export function CalendarView() {
           </div>
         ) : (
         <>
-        {!providerTabActive && (payload?.providers || []).length > 0 && (
-          <div className="mb-3 rounded-lg border border-foreground/10 bg-card/30 p-3">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground/70">Provider Filters</p>
-            <div className="flex flex-wrap items-center gap-2">
-              {(payload?.providers || []).map((provider) => {
-                const hidden = hiddenProviderAccountIds.has(provider.id);
-                return (
-                  <button
-                    key={provider.id}
-                    type="button"
-                    onClick={() => {
-                      setHiddenProviderAccountIds((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(provider.id)) next.delete(provider.id);
-                        else next.add(provider.id);
-                        return next;
-                      });
-                    }}
-                    className={cn(
-                      "rounded-full border px-2 py-0.5 text-xs transition-colors",
-                      hidden
-                        ? "border-foreground/20 bg-background/60 text-muted-foreground"
-                        : "border-pink-500/30 bg-pink-500/15 text-pink-200"
-                    )}
-                  >
-                    {hidden ? "Show" : "Hide"} {provider.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
         {viewMode === "month" ? (
             <div className="grid gap-1 rounded-lg border border-foreground/10 bg-card/30 p-2 md:grid-cols-7">
               {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((w) => (
@@ -1256,7 +1516,7 @@ export function CalendarView() {
                     <div className="mb-1 text-xs font-medium text-foreground/80">{day.getDate()}</div>
                     <div className="space-y-1">
                       {items.slice(0, 3).map((item) => {
-                        const badge = badgeForItem(item, accountLabelById);
+                        const badge = badgeForItem(item, accountLabelById, accountVendorById);
                         const Icon = badge.Icon;
                         return (
                           <div
@@ -1273,7 +1533,7 @@ export function CalendarView() {
                                   <span className={cn("min-w-0 flex-1 truncate", isCompletedItem(item) && "line-through")}>
                                     {truncateTitle(item.title, 30)}
                                   </span>
-                                  <span className="shrink-0 text-[10px] font-medium text-foreground/85">{formatTimeOnly(item.dueAt)}</span>
+                                  <span className="shrink-0 text-[10px] font-medium text-foreground/85">{formatTimeRange(item.dueAt, item.type === "task" ? undefined : item.endAt)}</span>
                                   {isCompletedItem(item) && <Check className="h-3 w-3 shrink-0" />}
                                   {renderItemControls(item, "month")}
                                 </div>
@@ -1300,7 +1560,7 @@ export function CalendarView() {
                     </div>
                     <div className="space-y-1">
                       {items.map((item) => {
-                        const badge = badgeForItem(item, accountLabelById);
+                        const badge = badgeForItem(item, accountLabelById, accountVendorById);
                         const Icon = badge.Icon;
                         return (
                           <div
@@ -1317,7 +1577,7 @@ export function CalendarView() {
                                   <span className={cn("min-w-0 flex-1 truncate", isCompletedItem(item) && "line-through")}>
                                     {truncateTitle(item.title, 34)}
                                   </span>
-                                  <span className="shrink-0 text-[10px] font-medium text-foreground/85">{formatTimeOnly(item.dueAt)}</span>
+                                  <span className="shrink-0 text-[10px] font-medium text-foreground/85">{formatTimeRange(item.dueAt, item.type === "task" ? undefined : item.endAt)}</span>
                                   {isCompletedItem(item) && <Check className="h-3 w-3 shrink-0" />}
                                   {renderItemControls(item, "week")}
                                 </div>
@@ -1344,7 +1604,7 @@ export function CalendarView() {
               <p className="text-sm text-muted-foreground/70">No upcoming items.</p>
             )}
             {filteredUpcoming.map((item) => {
-              const badge = badgeForItem(item, accountLabelById);
+              const badge = badgeForItem(item, accountLabelById, accountVendorById);
               const Icon = badge.Icon;
               return (
                 <div key={item.id} className="flex flex-wrap items-center gap-2 rounded-md border border-foreground/10 bg-background/60 px-3 py-2">
@@ -1356,7 +1616,7 @@ export function CalendarView() {
                     {truncateTitle(item.title, 52)}
                   </span>
                   {isCompletedItem(item) && <Check className="h-4 w-4 text-muted-foreground" />}
-                  <span className="text-xs text-muted-foreground/70">{formatDateTime(item.dueAt)}</span>
+                  <span className="text-xs text-muted-foreground/70">{formatDateTime(item.dueAt)}{item.type !== "task" ? ` (${formatTimeRange(item.dueAt, item.endAt)})` : ""}</span>
                   {renderItemControls(item, "upcoming")}
                 </div>
               );
@@ -1412,6 +1672,135 @@ export function CalendarView() {
         </div>
       )}
 
+      {createOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl border border-foreground/10 bg-card p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground">Create calendar item</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  if (saving) return;
+                  setCreateOpen(false);
+                  resetCreateForm();
+                }}
+                className="rounded-md p-1 text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+                aria-label="Close create modal"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <label className="block text-xs text-muted-foreground">
+                Title
+                <input
+                  value={createTitle}
+                  onChange={(e) => setCreateTitle(e.target.value)}
+                  className={cn("mt-1 w-full", CALENDAR_INPUT_CLASS)}
+                  placeholder="Reminder or event title"
+                />
+              </label>
+
+              <label className="block text-xs text-muted-foreground">
+                Description
+                <textarea
+                  value={createNotes}
+                  onChange={(e) => setCreateNotes(e.target.value)}
+                  rows={2}
+                  placeholder="Optional details"
+                  className={cn("mt-1 w-full resize-none", CALENDAR_INPUT_CLASS)}
+                />
+              </label>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="block text-xs text-muted-foreground">
+                  <p>Start</p>
+                  <DateTimePicker
+                    value={createDueAt}
+                    onChange={setCreateDueAt}
+                    className="mt-1 w-full"
+                  />
+                </div>
+                <div className="block text-xs text-muted-foreground">
+                  <p>Type</p>
+                  <ThemedSelect
+                    value={createKind}
+                    onChange={(value) => {
+                      const next = value === "event" ? "event" : "reminder";
+                      setCreateKind(next);
+                      if (next !== "event") setCreateEndAt("");
+                    }}
+                    options={[{ value: "reminder", label: "Reminder" }, { value: "event", label: "Event" }]}
+                    className="mt-1 w-full"
+                  />
+                </div>
+              </div>
+
+              {createKind === "event" && (
+                <div className="block text-xs text-muted-foreground">
+                  <p>End (optional)</p>
+                  <DateTimePicker
+                    value={createEndAt}
+                    onChange={setCreateEndAt}
+                    className="mt-1 w-full"
+                  />
+                </div>
+              )}
+
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={createSaveToProvider}
+                  onChange={(e) => {
+                    setCreateSaveToProvider(e.target.checked);
+                    if (!e.target.checked) setCreateProviderId("");
+                  }}
+                />
+                Save to provider
+              </label>
+
+              {createSaveToProvider && (
+                <div className="block text-xs text-muted-foreground">
+                  <p>Provider account</p>
+                  <ThemedSelect
+                    value={createProviderId}
+                    onChange={(value) => setCreateProviderId(value)}
+                    options={enabledProviders.map((provider) => ({ value: provider.id, label: provider.label }))}
+                    className="mt-1 w-full"
+                  />
+                  {createError && <p className="mt-1 text-xs text-red-300">{createError}</p>}
+                </div>
+              )}
+
+              {!createSaveToProvider && createError && <p className="text-xs text-red-300">{createError}</p>}
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (saving) return;
+                  setCreateOpen(false);
+                  resetCreateForm();
+                }}
+                className="rounded-md border border-foreground/10 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void createItem()}
+                disabled={saving || !createTitle.trim() || !createDueAt.trim()}
+                className="rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-xs font-medium text-sky-300 disabled:opacity-60"
+              >
+                {saving ? "Creating..." : "Create"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {pendingAction && pendingAction.item.type !== "task" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm px-4">
           <div className="w-full max-w-md rounded-xl border border-foreground/10 bg-card p-4 shadow-2xl">
@@ -1438,8 +1827,8 @@ export function CalendarView() {
                 ? "This will keep the item on the calendar as completed (greyed out with a checkmark) and remove it from Upcoming."
                 : pendingAction.type === "undo"
                   ? "This will restore the item to its state before completion and add it back to Upcoming if relevant."
-                  : (pendingAction.item.source === "provider" || pendingAction.item.readOnly)
-                    ? "This will remove the imported item locally from Mission Control. If it still exists on CalDAV, a future sync will import it again."
+                  : (pendingAction.item.source === "provider")
+                    ? "This will delete the item from both Mission Control and the connected provider calendar."
                     : "This will permanently remove the item from the calendar and Upcoming."}
             </p>
             <p className="mt-2 rounded-md border border-foreground/10 bg-background/60 px-2 py-1 text-sm text-foreground/90">
@@ -1521,7 +1910,7 @@ export function CalendarView() {
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="block text-xs text-muted-foreground">
-                  <p>Date & time</p>
+                  <p>Start</p>
                   <DateTimePicker
                     value={editDueAt}
                     onChange={setEditDueAt}
@@ -1532,12 +1921,27 @@ export function CalendarView() {
                   <p>Type</p>
                   <ThemedSelect
                     value={editKind}
-                    onChange={(value) => setEditKind(value === "event" ? "event" : "reminder")}
+                    onChange={(value) => {
+                      const next = value === "event" ? "event" : "reminder";
+                      setEditKind(next);
+                      if (next !== "event") setEditEndAt("");
+                    }}
                     options={[{ value: "reminder", label: "Reminder" }, { value: "event", label: "Event" }]}
                     className="mt-1 w-full"
                   />
                 </div>
               </div>
+
+              {editKind === "event" && (
+                <div className="block text-xs text-muted-foreground">
+                  <p>End (optional)</p>
+                  <DateTimePicker
+                    value={editEndAt}
+                    onChange={setEditEndAt}
+                    className="mt-1 w-full"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="mt-4 flex items-center justify-end gap-2">
