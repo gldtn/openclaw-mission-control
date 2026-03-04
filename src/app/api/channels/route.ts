@@ -393,8 +393,8 @@ export async function GET(request: NextRequest) {
           icon: "💼",
           setupType: "token" as const,
           setupCommand: "openclaw channels add --channel slack --token <BOT_TOKEN> --app-token <APP_TOKEN>",
-          setupHint: "Create a Slack app at https://api.slack.com/apps with Socket Mode enabled.",
-          configHint: "Uses Bolt SDK. Supports workspace apps.",
+          setupHint: "Create a Slack app at https://api.slack.com/apps with Socket Mode enabled, then provide both the bot token and the app token.",
+          configHint: "Requires both xoxb bot token and xapp Socket Mode app token.",
           tokenLabel: "Bot Token",
           tokenPlaceholder: "xoxb-...",
           docsUrl: "https://docs.openclaw.ai/channels/slack",
@@ -404,9 +404,9 @@ export async function GET(request: NextRequest) {
           label: "Signal",
           icon: "🔒",
           setupType: "cli" as const,
-          setupCommand: "openclaw channels login --channel signal",
-          setupHint: "Requires signal-cli to be installed. Privacy-focused.",
-          configHint: "Uses signal-cli daemon.",
+          setupCommand: "",
+          setupHint: "Manual setup required. Link signal-cli and configure the Signal channel using the official docs.",
+          configHint: "Mission Control does not complete Signal registration in-app.",
           docsUrl: "https://docs.openclaw.ai/channels/signal",
         },
         {
@@ -584,9 +584,8 @@ export async function POST(request: NextRequest) {
         const args = ["channels", "login", "--channel", channel];
         if (body.account) args.push("--account", body.account as string);
 
-        // For WhatsApp: this spawns an interactive QR code session
-        // We need to handle this differently — tell the user to use the Terminal
-        if (channel === "whatsapp" || channel === "signal") {
+        // WhatsApp login is interactive and handled by the QR modal flow.
+        if (channel === "whatsapp") {
           const command = `openclaw channels login --channel ${channel}${body.account ? ` --account ${body.account}` : ""}`;
           const messageBase = `This channel requires interactive login. Run this in the Terminal:\n\n${command}`;
           const message = pluginSetup.note
@@ -600,6 +599,16 @@ export async function POST(request: NextRequest) {
             pluginAutoEnabled: pluginSetup.autoEnabled,
             restartRecommended: pluginSetup.autoEnabled,
           });
+        }
+
+        if (channel === "signal") {
+          return NextResponse.json(
+            {
+              error:
+                "Signal setup is manual. Follow the official Signal channel guide to register signal-cli and configure the channel before enabling it in Mission Control.",
+            },
+            { status: 400 },
+          );
         }
 
         let output = "";

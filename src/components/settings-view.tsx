@@ -477,7 +477,8 @@ export function SettingsView() {
                           value={tzSearch}
                           onChange={(e) => setTzSearch(e.target.value)}
                           placeholder="Search timezones..."
-                          className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
+                          aria-label="Search timezones"
+                          className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground/70 focus:outline-none"
                           autoFocus
                         />
                       </div>

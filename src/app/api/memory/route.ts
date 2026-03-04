@@ -8,7 +8,7 @@ import {
   rename,
   copyFile,
 } from "fs/promises";
-import { join, extname, basename } from "path";
+import { join, extname, basename, resolve } from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { getDefaultWorkspaceSync } from "@/lib/paths";
@@ -256,11 +256,16 @@ export async function PUT(request: NextRequest) {
     }
 
     if (file) {
-      const safePath = String(file).replace(/\.\./g, "").replace(/^\/+/, "");
-      if (!safePath.endsWith(".md")) {
+      const memoryDir = join(WORKSPACE, "memory");
+      const candidate = String(file).replace(/^\/+/, "");
+      if (!candidate.endsWith(".md")) {
         return NextResponse.json({ error: "invalid file" }, { status: 400 });
       }
-      const fullPath = join(WORKSPACE, "memory", safePath);
+      const fullPath = resolve(memoryDir, candidate);
+      if (!fullPath.startsWith(memoryDir + "/") && fullPath !== memoryDir) {
+        return NextResponse.json({ error: "Invalid path" }, { status: 403 });
+      }
+      const safePath = candidate;
       await writeFile(fullPath, content, "utf-8");
       const words = content.split(/\s+/).filter(Boolean).length;
       const size = Buffer.byteLength(content, "utf-8");

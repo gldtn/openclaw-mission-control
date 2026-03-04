@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -35,7 +35,12 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SectionBody, SectionHeader, SectionLayout } from "@/components/section-layout";
-import { getTimeFormatSnapshot, withTimeFormat } from "@/lib/time-format-preference";
+import {
+  getTimeFormatSnapshot,
+  getTimeFormatServerSnapshot,
+  subscribeTimeFormatPreference,
+  withTimeFormat,
+} from "@/lib/time-format-preference";
 import { useGatewayStatusStore } from "@/lib/gateway-status-store";
 
 /* ── types ────────────────────────────────────────── */
@@ -651,7 +656,11 @@ const POLL_INTERVAL = 8000;
 
 export function DashboardView() {
   const router = useRouter();
-  const timeFormat = getTimeFormatSnapshot();
+  const timeFormat = useSyncExternalStore(
+    subscribeTimeFormatPreference,
+    getTimeFormatSnapshot,
+    getTimeFormatServerSnapshot,
+  );
   const [live, setLive] = useState<LiveData | null>(null);
   const [system, setSystem] = useState<SystemData | null>(null);
   const [lastRefresh, setLastRefresh] = useState(0);
@@ -922,12 +931,14 @@ export function DashboardView() {
               value={live.agents.length}
               label="Agents"
               iconClassName="text-stone-300 dark:text-[#66717d]"
+              href="/agents"
             />
             <StatCard
               icon={Activity}
               value={formatTokens(live.agents.reduce((s, a) => s + a.totalTokens, 0))}
               label="Tokens Used"
               iconClassName="text-stone-300 dark:text-[#66717d]"
+              href="/sessions"
             />
             <StatCard
               icon={Clock}
@@ -940,19 +951,21 @@ export function DashboardView() {
               }
               alert={live.cron.stats.error > 0 ? `${live.cron.stats.error} error` : undefined}
               alertHref={live.cron.stats.error > 0 ? "/cron?show=errors" : undefined}
-              onClick={live.cron.stats.error > 0 ? () => window.location.href = "/cron?show=errors" : undefined}
+              href="/cron"
             />
             <StatCard
               icon={Smartphone}
               value={system?.stats.totalDevices || 0}
               label="Devices"
               iconClassName="text-stone-300 dark:text-[#66717d]"
+              href="/agents"
             />
             <StatCard
               icon={Wrench}
               value={system?.stats.totalSkills || 0}
               label="Skills"
               iconClassName="text-stone-300 dark:text-[#66717d]"
+              href="/skills"
             />
           </div>
 
@@ -1123,9 +1136,9 @@ export function DashboardView() {
           <div className="grid gap-5 lg:grid-cols-2">
             {/* Agents */}
             <div>
-              <h2 className="mb-3 flex items-center gap-2 text-xs font-sans font-semibold uppercase tracking-wider text-muted-foreground">
+              <Link href="/agents" className="mb-3 flex items-center gap-2 text-xs font-sans font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground/70">
                 <Bot className="h-3.5 w-3.5" /> Agents
-              </h2>
+              </Link>
               <div className="space-y-2.5">
                 {live.agents.map((agent) => (
                   <div key={agent.id} className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm dark:border-[#2c343d] dark:bg-[#171a1d]">
@@ -1192,9 +1205,9 @@ export function DashboardView() {
 
             {/* Cron countdowns */}
             <div>
-              <h2 className="mb-3 flex items-center gap-2 text-xs font-sans font-semibold uppercase tracking-wider text-muted-foreground">
+              <Link href="/cron" className="mb-3 flex items-center gap-2 text-xs font-sans font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground/70">
                 <Clock className="h-3.5 w-3.5" /> Cron Schedules
-              </h2>
+              </Link>
               <div className="space-y-2.5">
                 {live.cron.jobs.map((job) => {
                   const progress = cronProgress(job);
@@ -1301,9 +1314,9 @@ export function DashboardView() {
 
           {/* ── Live activity log ───────────────────── */}
           <div>
-            <h2 className="mb-3 flex items-center gap-2 text-xs font-sans font-semibold uppercase tracking-wider text-muted-foreground">
+            <Link href="/logs" className="mb-3 flex items-center gap-2 text-xs font-sans font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground/70">
               <Radio className="h-3.5 w-3.5" /> Gateway Log
-            </h2>
+            </Link>
             <div className="rounded-xl border border-stone-200 bg-white p-1 shadow-sm dark:border-[#2c343d] dark:bg-[#171a1d]">
               <div className="max-h-80 overflow-y-auto font-mono text-xs leading-5">
                 {live.logEntries.map((entry, i) => {
@@ -1391,6 +1404,7 @@ function StatCard({
   alert,
   alertHref,
   onClick,
+  href,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   value: string | number;
@@ -1399,15 +1413,14 @@ function StatCard({
   alert?: string;
   alertHref?: string;
   onClick?: () => void;
+  href?: string;
 }) {
-  return (
-    <div
-      className={cn(
-        "rounded-xl border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-800",
-        onClick && "cursor-pointer"
-      )}
-      onClick={onClick}
-    >
+  const cardClass = cn(
+    "rounded-xl border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-800",
+    (onClick || href) && "cursor-pointer transition-colors hover:border-foreground/10 hover:bg-stone-50 dark:hover:bg-stone-700/60"
+  );
+  const inner = (
+    <>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-stone-400 dark:text-[#7a8591]">
@@ -1442,6 +1455,19 @@ function StatCard({
           </p>
         )
       )}
+    </>
+  );
+  if (href) {
+    return (
+      <Link href={href} className={cardClass}>
+        {inner}
+      </Link>
+    );
+  }
+  return (
+    <div className={cardClass} onClick={onClick}>
+      {inner}
     </div>
   );
 }
+

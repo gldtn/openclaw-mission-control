@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   AlertTriangle,
   CircleHelp,
@@ -26,7 +26,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ApiWarningBadge } from "@/components/ui/api-warning-badge";
 import { PermissionsView } from "@/components/permissions-view";
 import { cn } from "@/lib/utils";
-import { getTimeFormatSnapshot, withTimeFormat } from "@/lib/time-format-preference";
+import {
+  getTimeFormatSnapshot,
+  getTimeFormatServerSnapshot,
+  subscribeTimeFormatPreference,
+  withTimeFormat,
+  type TimeFormatPreference,
+} from "@/lib/time-format-preference";
 
 /* ── types ─────────────────────────────────────── */
 
@@ -112,7 +118,7 @@ const EMPTY_SUMMARY = { critical: 0, warn: 0, info: 0 } as const;
 
 /* ── helpers ────────────────────────────────────── */
 
-function formatTime(ts?: number): string {
+function formatTime(ts: number | undefined, timeFormat: TimeFormatPreference): string {
   if (!ts) return "Never";
   return new Date(ts).toLocaleString(
     undefined,
@@ -125,7 +131,7 @@ function formatTime(ts?: number): string {
         minute: "2-digit",
         second: "2-digit",
       },
-      getTimeFormatSnapshot(),
+      timeFormat,
     ),
   );
 }
@@ -354,6 +360,11 @@ const DANGEROUS_FLAGS: DangerousFlag[] = [
 
 export function SecurityView({ initialTab }: { initialTab?: SecurityTab } = {}) {
   /* ── state ──────────────────────────────────── */
+  const timeFormat = useSyncExternalStore(
+    subscribeTimeFormatPreference,
+    getTimeFormatSnapshot,
+    getTimeFormatServerSnapshot,
+  );
   const [snapshot, setSnapshot] = useState<SecuritySnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
@@ -811,7 +822,7 @@ export function SecurityView({ initialTab }: { initialTab?: SecurityTab } = {}) 
                           {grade === "A" ? "Excellent" : grade === "B" ? "Good" : grade === "C" ? "Fair" : "Needs Work"}
                         </p>
                         <p className="mt-0.5 text-xs text-muted-foreground/70">
-                          {findings.length} finding{findings.length !== 1 ? "s" : ""} from {lastAudit.mode} scan · {formatTime(lastAudit.ts)}
+                          {findings.length} finding{findings.length !== 1 ? "s" : ""} from {lastAudit.mode} scan · {formatTime(lastAudit.ts, timeFormat)}
                         </p>
                       </div>
                     </div>
@@ -865,6 +876,7 @@ export function SecurityView({ initialTab }: { initialTab?: SecurityTab } = {}) 
                     <select
                       value={prefs.defaultMode}
                       onChange={(e) => setPrefs((p) => ({ ...p, defaultMode: e.target.value === "deep" ? "deep" : "quick" }))}
+                      aria-label="Default scan mode"
                       className="rounded border border-foreground/15 bg-card px-2 py-1 text-xs text-foreground/90"
                     >
                       <option value="quick">quick</option>
@@ -956,7 +968,7 @@ export function SecurityView({ initialTab }: { initialTab?: SecurityTab } = {}) 
                 {lastFix && (
                   <Panel title="Last Safe Fix Run">
                     <p className="text-xs text-muted-foreground/75">
-                      {formatTime(lastFix.ts)} · status:{" "}
+                      {formatTime(lastFix.ts, timeFormat)} · status:{" "}
                       <span className={lastFix.fix.ok ? "text-emerald-700 dark:text-emerald-200" : "text-red-700 dark:text-red-200"}>
                         {lastFix.fix.ok ? "ok" : "needs review"}
                       </span>

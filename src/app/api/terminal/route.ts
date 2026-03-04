@@ -193,7 +193,7 @@ if (typeof globalThis !== "undefined") {
 }
 
 function createSession(cols = 80, rows = 24): string {
-  const id = crypto.randomUUID().slice(0, 8);
+  const id = crypto.randomUUID();
   const home = getOpenClawHome();
   const python = getPython();
 

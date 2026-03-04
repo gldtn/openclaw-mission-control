@@ -299,6 +299,7 @@ function ProviderCard({
                     value={draftKey}
                     onChange={(e) => setDraftKey(e.target.value)}
                     placeholder={provider.configured ? "Paste a new API key to replace the current one" : "Paste API key"}
+                    aria-label={`API key for ${provider.name || provider.id}`}
                     className="flex-1 rounded-md border border-foreground/10 bg-background px-3 py-2 text-xs text-foreground/90 outline-none transition-colors focus:border-emerald-500/40"
                   />
                   <button
@@ -373,6 +374,7 @@ function ProviderCard({
                       onTest(provider.id, voice);
                     }
                   }}
+                  aria-label="Select voice"
                   className="flex-1 rounded-md border border-foreground/10 bg-muted px-2.5 py-1.5 text-xs text-foreground/80 outline-none focus:border-emerald-500/30"
                 >
                   {provider.voices.map((v) => (
@@ -637,6 +639,7 @@ function TtsTestPanel({
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={3}
+        aria-label="Text to convert to speech"
         className="w-full rounded-lg border border-foreground/10 bg-muted px-3 py-2 text-sm text-foreground/90 placeholder-zinc-600 outline-none focus:border-violet-500/30 resize-none"
         placeholder="Enter text to convert to speech..."
       />
@@ -658,6 +661,7 @@ function TtsTestPanel({
                 onTest(text, nextProvider, firstVoice);
               }
             }}
+            aria-label="TTS provider"
             className="w-full rounded-md border border-foreground/10 bg-muted px-2.5 py-2 text-xs text-foreground/80 outline-none focus:border-violet-500/30"
           >
             {configuredProviders.map((p) => (
@@ -681,6 +685,7 @@ function TtsTestPanel({
               }
             }}
             disabled={!effectiveProviderId || availableVoices.length === 0}
+            aria-label="TTS voice"
             className="w-full rounded-md border border-foreground/10 bg-muted px-2.5 py-2 text-xs text-foreground/80 outline-none focus:border-violet-500/30 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {availableVoices.length > 0 ? (
@@ -850,6 +855,7 @@ function TalkModeSection({
                   onChange={(e) => setTestMessage(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && void onTestTalk(testMessage)}
                   placeholder="Say something to the agent…"
+                  aria-label="Test message for Talk"
                   className="flex-1 min-w-0 rounded-lg border border-foreground/10 bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
                   disabled={testingTalk}
                 />
@@ -1105,6 +1111,7 @@ function TtsSettingsPanel({
               }}
               className="w-24 rounded-md border border-foreground/10 bg-muted px-2 py-1 text-xs text-foreground/70 outline-none"
               placeholder="1500"
+              aria-label="Summary threshold (characters)"
             />
             <span className="text-xs text-muted-foreground/60">chars</span>
           </div>

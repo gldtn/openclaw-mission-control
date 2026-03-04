@@ -299,7 +299,7 @@ function SearchPlayground({
           <button
             type="button"
             onClick={() => void copyCommand()}
-            className="inline-flex items-center gap-1 rounded-md border border-foreground/10 bg-foreground/5 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-foreground/10"
+            className="inline-flex items-center gap-1 rounded-md border border-foreground/10 bg-foreground/5 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Copy className="h-3 w-3" />
             {copied ? "Copied" : "Copy"}
@@ -312,7 +312,7 @@ function SearchPlayground({
           type="button"
           onClick={() => void runSearch()}
           disabled={running || disabled || !query.trim()}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-600 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-cyan-500 disabled:opacity-60"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-600 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
         >
           {running ? (
                 <span className="inline-flex items-center gap-0.5">
@@ -410,7 +410,7 @@ export function WebSearchView() {
       <SectionHeader
         title={
           <span className="inline-flex items-center gap-2">
-            <Search className="h-5 w-5 text-stone-700 dark:text-stone-200" />
+            <Search className="h-5 w-5 text-stone-700 dark:text-[#f5f7fa]" />
             Web Search
           </span>
         }
@@ -420,7 +420,7 @@ export function WebSearchView() {
           <button
             type="button"
             onClick={() => void load()}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-stone-700 dark:hover:text-stone-100"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-[#2c343d] dark:bg-[#171a1d] dark:text-[#c7d0d9] dark:hover:bg-[#1e2227] dark:hover:text-[#f5f7fa]"
           >
             {loading ? (
                 <span className="inline-flex items-center gap-0.5">
@@ -538,7 +538,7 @@ export function WebSearchView() {
                         disabled={switchingModel || isSelected}
                         onClick={() => void switchModel(m.id)}
                         className={cn(
-                          "rounded-lg border px-2.5 py-2 text-left transition-all",
+                          "rounded-lg border px-2.5 py-2 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                           isSelected
                             ? "border-violet-500/30 bg-violet-500/10"
                             : "border-foreground/5 bg-foreground/5 hover:border-violet-500/20 hover:bg-violet-500/5 cursor-pointer",

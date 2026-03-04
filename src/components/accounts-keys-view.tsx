@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   AlertTriangle,
   CheckCircle,
@@ -21,7 +21,12 @@ import {
 } from "lucide-react";
 import { InlineSpinner } from "@/components/ui/loading-state";
 import { SectionBody, SectionHeader, SectionLayout } from "@/components/section-layout";
-import { getTimeFormatSnapshot, withTimeFormat } from "@/lib/time-format-preference";
+import {
+  getTimeFormatSnapshot,
+  getTimeFormatServerSnapshot,
+  subscribeTimeFormatPreference,
+  withTimeFormat,
+} from "@/lib/time-format-preference";
 
 type AccountsResponse = {
   generatedAt: number;
@@ -582,7 +587,11 @@ function SecretsPanel() {
 }
 
 export function AccountsKeysView() {
-  const timeFormat = getTimeFormatSnapshot();
+  const timeFormat = useSyncExternalStore(
+    subscribeTimeFormatPreference,
+    getTimeFormatSnapshot,
+    getTimeFormatServerSnapshot,
+  );
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [revealSecrets, setRevealSecrets] = useState(false);

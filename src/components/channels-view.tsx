@@ -140,6 +140,13 @@ function getPostSetupChecklist(channel: string): string[] {
         "The gateway restarts automatically on config changes.",
         "Send a test message and confirm a reply in the same channel.",
       ];
+    case "signal":
+      return [
+        "Follow the official Signal channel guide to register and link signal-cli.",
+        "Configure the Signal channel in OpenClaw before enabling it here.",
+        "Return to this page and refresh runtime status after the gateway has loaded the channel.",
+        "Send a test Signal message only after the account shows as configured.",
+      ];
     default:
       return [
         "The gateway restarts automatically on config changes.",
@@ -166,7 +173,7 @@ export function ChannelsView() {
   const [wizardError, setWizardError] = useState("");
 
   const [qrModalOpen, setQrModalOpen] = useState(false);
-  const [qrChannel, setQrChannel] = useState<"whatsapp" | "signal">("whatsapp");
+  const [qrChannel, setQrChannel] = useState<"whatsapp">("whatsapp");
 
   // Pairing & Devices
   const [dmPairings, setDmPairings] = useState<DmPairingRequest[]>([]);
@@ -366,6 +373,15 @@ export function ChannelsView() {
         return;
       }
 
+      if (selectedWizardChannel.setupType === "cli") {
+        setWizardOutput(
+          selectedWizardChannel.setupHint ||
+            "Manual setup is required for this channel. Follow the official docs, then come back here to verify status."
+        );
+        setWizardStep(3);
+        return;
+      }
+
       const account = wizardAccount.trim();
       const setupCommand = selectedWizardChannel.setupCommand.toLowerCase();
       const needsLogin =
@@ -395,11 +411,10 @@ export function ChannelsView() {
       if (data.error) throw new Error(data.error);
 
       if (data.interactive) {
-        // For WhatsApp/Signal: open the QR login modal instead of
-        // telling the user to switch to the Terminal.
+        // WhatsApp is the only in-app QR login flow Mission Control supports.
         const ch = selectedWizardChannel.channel;
-        if (ch === "whatsapp" || ch === "signal") {
-          setQrChannel(ch as "whatsapp" | "signal");
+        if (ch === "whatsapp") {
+          setQrChannel("whatsapp");
           setQrModalOpen(true);
           setWizardRunning(false);
           return;
@@ -574,7 +589,7 @@ export function ChannelsView() {
                                   ? "Interactive login"
                                   : ch.setupType === "auto"
                                     ? "Built in"
-                                    : "CLI setup"}
+                                    : "Manual setup"}
                             </p>
                           </div>
                         </div>
@@ -673,17 +688,19 @@ export function ChannelsView() {
                         />
                       </label>
                     )}
-                    <label className="space-y-1 md:col-span-2">
-                      <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
-                        Account (optional)
-                      </span>
-                      <input
-                        value={wizardAccount}
-                        onChange={(e) => setWizardAccount(e.target.value)}
-                        placeholder="default"
-                        className="w-full rounded-md border border-foreground/10 bg-muted px-2.5 py-2 text-xs text-foreground/90 outline-none focus:border-violet-500/30"
-                      />
-                    </label>
+                    {selectedWizardChannel.setupType !== "cli" && (
+                      <label className="space-y-1 md:col-span-2">
+                        <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
+                          Account (optional)
+                        </span>
+                        <input
+                          value={wizardAccount}
+                          onChange={(e) => setWizardAccount(e.target.value)}
+                          placeholder="default"
+                          className="w-full rounded-md border border-foreground/10 bg-muted px-2.5 py-2 text-xs text-foreground/90 outline-none focus:border-violet-500/30"
+                        />
+                      </label>
+                    )}
                   </div>
 
                   {wizardError && (
@@ -718,7 +735,7 @@ export function ChannelsView() {
                       ) : (
                         <>
                           <Plug className="h-3 w-3" />
-                          Run Setup
+                          {selectedWizardChannel.setupType === "cli" ? "Continue" : "Run Setup"}
                         </>
                       )}
                     </button>
@@ -728,9 +745,25 @@ export function ChannelsView() {
 
               {wizardStep === 3 && selectedWizardChannel && (
                 <div className="space-y-3">
-                  <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
-                    Setup run completed for <span className="font-semibold">{selectedWizardChannel.label}</span>.
-                    {selectedWizardChannel.setupType === "qr" && " If interactive login is required, continue in Terminal."}
+                  <div
+                    className={cn(
+                      "rounded-lg px-3 py-2 text-xs",
+                      selectedWizardChannel.setupType === "cli"
+                        ? "border border-amber-500/20 bg-amber-500/10 text-amber-200"
+                        : "border border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
+                    )}
+                  >
+                    {selectedWizardChannel.setupType === "cli" ? (
+                      <>
+                        Manual setup required for <span className="font-semibold">{selectedWizardChannel.label}</span>.
+                        Follow the guide below, then return here to verify the channel status.
+                      </>
+                    ) : (
+                      <>
+                        Setup run completed for <span className="font-semibold">{selectedWizardChannel.label}</span>.
+                        {selectedWizardChannel.setupType === "qr" && " If interactive login is required, continue in Terminal."}
+                      </>
+                    )}
                   </div>
                   <div className="rounded-lg border border-foreground/10 bg-card/70 px-3 py-2.5">
                     <p className="text-xs font-semibold text-foreground/90">
@@ -778,12 +811,26 @@ export function ChannelsView() {
                       >
                         Setup Another
                       </button>
-                      <Link
-                        href="/terminal"
-                        className="inline-flex items-center gap-1 rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs font-medium transition-colors hover:bg-primary/90"
-                      >
-                        Open Terminal
-                      </Link>
+                      {selectedWizardChannel.setupType === "cli" ? (
+                        selectedWizardChannel.docsUrl ? (
+                          <a
+                            href={selectedWizardChannel.docsUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                          >
+                            Open Setup Guide
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        ) : null
+                      ) : (
+                        <Link
+                          href="/terminal"
+                          className="inline-flex items-center gap-1 rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs font-medium transition-colors hover:bg-primary/90"
+                        >
+                          Open Terminal
+                        </Link>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1107,7 +1154,7 @@ export function ChannelsView() {
           {toast.message}
         </div>
       )}
-      {/* QR Login Modal for WhatsApp / Signal */}
+      {/* QR Login Modal for WhatsApp */}
       {qrModalOpen && (
         <QrLoginModal
           channel={qrChannel}
@@ -1115,7 +1162,7 @@ export function ChannelsView() {
           onSuccess={() => {
             setQrModalOpen(false);
             void fetchChannels();
-            flash(`${qrChannel === "whatsapp" ? "WhatsApp" : "Signal"} login successful`);
+            flash("WhatsApp login successful");
           }}
           onClose={() => setQrModalOpen(false)}
         />

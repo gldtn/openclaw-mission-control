@@ -67,12 +67,6 @@ async function gatewayConfigGet(): Promise<Record<string, unknown>> {
   return gatewayCall<Record<string, unknown>>("config.get", undefined, 12000);
 }
 
-async function applyConfigPatchWithRetry(
-  rawPatch: Record<string, unknown>,
-): Promise<void> {
-  return patchConfig(rawPatch);
-}
-
 type AgentHeartbeatRow = {
   id: string;
   name: string;
@@ -305,7 +299,7 @@ export async function POST(request: NextRequest) {
       if (heartbeat === null) delete defaultsBlock.heartbeat;
       else defaultsBlock.heartbeat = heartbeat;
 
-      await applyConfigPatchWithRetry({
+      await patchConfig({
         agents: {
           ...agentsBlock,
           defaults: defaultsBlock,
@@ -351,7 +345,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      await applyConfigPatchWithRetry({
+      await patchConfig({
         agents: {
           ...agentsBlock,
           list: nextList,
@@ -424,7 +418,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      await applyConfigPatchWithRetry({ channels: channelsBlock });
+      await patchConfig({ channels: channelsBlock });
 
       const next = await gatewayConfigGet();
       return jsonNoStore({ ok: true, action, ...buildHeartbeatResponse(next) });

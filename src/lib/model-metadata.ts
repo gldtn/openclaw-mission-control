@@ -344,6 +344,18 @@ export function getFriendlyModelName(key: string): string {
 }
 
 /**
+ * Return a flat list of model options suitable for <select> / <option> dropdowns,
+ * grouped by provider.  Each entry has { key, displayName, provider }.
+ */
+export function getModelOptions(): { key: string; displayName: string; provider: string }[] {
+  return Object.entries(MODEL_META).map(([key, meta]) => ({
+    key,
+    displayName: meta.displayName,
+    provider: meta.providerDisplayName,
+  }));
+}
+
+/**
  * Known provider display names and their emoji/icon identifiers.
  */
 export const PROVIDER_INFO: Record<string, { displayName: string; emoji: string }> = {

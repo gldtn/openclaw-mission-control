@@ -3,7 +3,7 @@ import { access, readFile } from "fs/promises";
 import { constants as fsConstants } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { runCli, runCliJson } from "@/lib/openclaw";
+import { getClient } from "@/lib/openclaw-client";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -106,26 +106,26 @@ async function pathExists(pathValue: string): Promise<boolean> {
   }
 }
 
-async function runBrowserJson<T>(
-  command: string[],
-  profile: string | null,
-  timeout = 15000
-): Promise<T> {
-  const args = ["browser"];
-  if (profile) args.push("--browser-profile", profile);
-  args.push(...command);
-  return runCliJson<T>(args, timeout);
+async function gwGet<T>(path: string, profile: string | null, timeout = 12000): Promise<T> {
+  const client = await getClient();
+  const qs = profile ? `?profile=${encodeURIComponent(profile)}` : "";
+  const res = await client.gatewayFetch(`${path}${qs}`, {
+    signal: AbortSignal.timeout(timeout),
+  });
+  if (!res.ok) throw new Error(`GET ${path} ${res.status}: ${await res.text().catch(() => "")}`);
+  return res.json() as Promise<T>;
 }
 
-async function runBrowserText(
-  command: string[],
-  profile: string | null,
-  timeout = 15000
-): Promise<string> {
-  const args = ["browser"];
-  if (profile) args.push("--browser-profile", profile);
-  args.push(...command);
-  return runCli(args, timeout);
+async function gwPost<T>(path: string, body: Record<string, unknown>, timeout = 15000): Promise<T> {
+  const client = await getClient();
+  const res = await client.gatewayFetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeout),
+  });
+  if (!res.ok) throw new Error(`POST ${path} ${res.status}: ${await res.text().catch(() => "")}`);
+  return res.json() as Promise<T>;
 }
 
 function sanitizeProfile(value: string | null): string | null {
@@ -135,19 +135,26 @@ function sanitizeProfile(value: string | null): string | null {
   return v;
 }
 
+type ExtensionPathResponse = {
+  path?: string;
+  installed?: boolean;
+  manifestName?: string;
+  manifestVersion?: string;
+};
+
 async function buildSnapshot(profile: string | null): Promise<RelaySnapshot> {
-  const statusP = runBrowserJson<BrowserStatus>(["status"], profile, 12000)
+  const statusP = gwGet<BrowserStatus>("/browser/status", profile)
     .then((value) => ({ value, error: null as string | null }))
     .catch((err) => ({ value: null, error: parseError(err) }));
-  const profilesP = runCliJson<BrowserProfiles>(["browser", "profiles"], 12000)
+  const profilesP = gwGet<BrowserProfiles>("/browser/profiles", null)
     .then((value) => ({ value, error: null as string | null }))
     .catch((err) => ({ value: null, error: parseError(err) }));
-  const tabsP = runBrowserJson<BrowserTabs>(["tabs"], profile, 12000)
+  const tabsP = gwGet<BrowserTabs>("/browser/tabs", profile)
     .then((value) => ({ value, error: null as string | null }))
     .catch((err) => ({ value: null, error: parseError(err) }));
-  const extensionPathP = runCli(["browser", "extension", "path"], 12000)
+  const extensionPathP = gwGet<ExtensionPathResponse | string>("/browser/extension/path", null)
     .then((value) => ({ value, error: null as string | null }))
-    .catch((err) => ({ value: "", error: parseError(err) }));
+    .catch((err) => ({ value: null, error: parseError(err) }));
 
   const [statusR, profilesR, tabsR, extensionPathR] = await Promise.all([
     statusP,
@@ -156,26 +163,43 @@ async function buildSnapshot(profile: string | null): Promise<RelaySnapshot> {
     extensionPathP,
   ]);
 
-  const extensionPath = parseExtensionPath(extensionPathR.value || "");
-  const resolvedPath = expandHome(extensionPath);
-  const manifestPath = resolvedPath ? join(resolvedPath, "manifest.json") : null;
+  let extensionPath: string | null = null;
+  let resolvedPath: string | null = null;
+  let manifestPath: string | null = null;
   let installed = false;
   let manifestName: string | null = null;
   let manifestVersion: string | null = null;
   let extensionError: string | null = extensionPathR.error;
 
-  if (resolvedPath) {
-    installed = await pathExists(resolvedPath);
-  }
+  const extData = extensionPathR.value;
+  if (extData && typeof extData === "object" && "path" in extData) {
+    // Structured response from gateway
+    extensionPath = extData.path || null;
+    installed = Boolean(extData.installed);
+    manifestName = extData.manifestName || null;
+    manifestVersion = extData.manifestVersion || null;
+    resolvedPath = expandHome(extensionPath);
+    manifestPath = resolvedPath ? join(resolvedPath, "manifest.json") : null;
+  } else {
+    // Fallback: plain text response (self-hosted backward compat)
+    const raw = typeof extData === "string" ? extData : "";
+    extensionPath = parseExtensionPath(raw);
+    resolvedPath = expandHome(extensionPath);
+    manifestPath = resolvedPath ? join(resolvedPath, "manifest.json") : null;
 
-  if (installed && manifestPath) {
-    try {
-      const raw = await readFile(manifestPath, "utf-8");
-      const manifest = JSON.parse(raw) as { name?: string; version?: string };
-      manifestName = manifest.name || null;
-      manifestVersion = manifest.version || null;
-    } catch (err) {
-      extensionError = extensionError || parseError(err);
+    if (resolvedPath) {
+      installed = await pathExists(resolvedPath);
+    }
+
+    if (installed && manifestPath) {
+      try {
+        const raw = await readFile(manifestPath, "utf-8");
+        const manifest = JSON.parse(raw) as { name?: string; version?: string };
+        manifestName = manifest.name || null;
+        manifestVersion = manifest.version || null;
+      } catch (err) {
+        extensionError = extensionError || parseError(err);
+      }
     }
   }
 
@@ -252,36 +276,35 @@ export async function POST(request: NextRequest) {
     let result: Record<string, unknown> = {};
     switch (action) {
       case "start": {
-        result = await runBrowserJson<Record<string, unknown>>(["start"], profile, 15000);
+        result = await gwPost<Record<string, unknown>>("/browser/start", { profile });
         break;
       }
       case "stop": {
-        result = await runBrowserJson<Record<string, unknown>>(["stop"], profile, 15000);
+        result = await gwPost<Record<string, unknown>>("/browser/stop", { profile });
         break;
       }
       case "restart": {
-        await runBrowserText(["stop"], profile, 15000).catch(() => "");
-        result = await runBrowserJson<Record<string, unknown>>(["start"], profile, 20000);
+        await gwPost("/browser/stop", { profile }).catch(() => ({}));
+        result = await gwPost<Record<string, unknown>>("/browser/start", { profile }, 20000);
         break;
       }
       case "install-extension": {
-        const output = await runCli(["browser", "extension", "install"], 20000);
-        result = { output };
+        result = await gwPost<Record<string, unknown>>("/browser/extension/install", {});
         break;
       }
       case "open-test-tab": {
         const targetUrl = (body.url || "").trim() || "https://docs.openclaw.ai/tools/browser";
-        result = await runBrowserJson<Record<string, unknown>>(
-          ["open", targetUrl],
-          profile,
+        result = await gwPost<Record<string, unknown>>(
+          "/browser/open",
+          { url: targetUrl, profile },
           20000
         );
         break;
       }
       case "snapshot-test": {
-        result = await runBrowserJson<Record<string, unknown>>(
-          ["snapshot", "--efficient", "--limit", "60"],
-          profile,
+        result = await gwPost<Record<string, unknown>>(
+          "/browser/snapshot",
+          { efficient: true, limit: 60, profile },
           25000
         );
         break;

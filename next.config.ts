@@ -18,6 +18,16 @@ const nextConfig: NextConfig = {
     AGENTBAY_HOSTED: process.env.AGENTBAY_HOSTED || "false",
     NEXT_PUBLIC_AGENTBAY_HOSTED: process.env.NEXT_PUBLIC_AGENTBAY_HOSTED || process.env.AGENTBAY_HOSTED || "false",
   },
+  headers: async () => [
+    {
+      source: "/(.*)",
+      headers: [
+        { key: "X-Content-Type-Options", value: "nosniff" },
+        { key: "X-Frame-Options", value: "DENY" },
+        { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+      ],
+    },
+  ],
   // Ensure modules resolve from project root (avoids HOME being used as context)
   webpack: (config, { dir }) => {
     config.resolve.modules = [

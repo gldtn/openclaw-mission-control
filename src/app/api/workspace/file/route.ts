@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFile } from "fs/promises";
-import { join, normalize } from "path";
+import { join, normalize, resolve } from "path";
 import { getDefaultWorkspace } from "@/lib/paths";
 
 const IMAGE_EXTENSIONS = new Set([
@@ -30,13 +30,14 @@ export async function GET(request: NextRequest) {
   }
 
   const normalized = normalize(rawPath).replace(/\\/g, "/");
-  if (normalized.startsWith("..") || normalized.includes("/..")) {
-    return NextResponse.json({ error: "Invalid path" }, { status: 400 });
-  }
 
   try {
     const workspace = await getDefaultWorkspace();
-    const fullPath = join(workspace, normalized);
+    const resolved = resolve(workspace, normalized);
+    if (!resolved.startsWith(workspace)) {
+      return NextResponse.json({ error: "Invalid path" }, { status: 403 });
+    }
+    const fullPath = resolved;
     const content = await readFile(fullPath);
 
     const ext = normalized.toLowerCase().slice(normalized.lastIndexOf("."));

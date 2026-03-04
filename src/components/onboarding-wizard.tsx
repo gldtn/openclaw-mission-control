@@ -69,11 +69,15 @@ type ChannelDef = {
   id: ChannelId;
   label: string;
   icon: string;
-  setupType: "token" | "qr";
+  setupType: "token" | "qr" | "manual";
   tokenLabel?: string;
   tokenPlaceholder?: string;
+  appTokenLabel?: string;
+  appTokenPlaceholder?: string;
+  requiresAppToken?: boolean;
   description: string;
   nextSteps: string;
+  docsUrl?: string;
 };
 
 type PairingRequest = {
@@ -203,6 +207,7 @@ const CHANNELS: ChannelDef[] = [
     tokenPlaceholder: "123456:ABC-DEF...",
     description: "Connect a Telegram bot token to let people message your agent.",
     nextSteps: "Ask someone to message your Telegram bot so you can approve the first contact.",
+    docsUrl: "https://docs.openclaw.ai/channels/telegram",
   },
   {
     id: "discord",
@@ -213,6 +218,7 @@ const CHANNELS: ChannelDef[] = [
     tokenPlaceholder: "MTIzNDU2Nzg5...",
     description: "Connect your Discord bot token to chat in DMs or servers.",
     nextSteps: "Invite the bot to a server or DM it once so the pairing request appears here.",
+    docsUrl: "https://docs.openclaw.ai/channels/discord",
   },
   {
     id: "whatsapp",
@@ -221,14 +227,16 @@ const CHANNELS: ChannelDef[] = [
     setupType: "qr",
     description: "WhatsApp requires a QR code scan from your phone.",
     nextSteps: "Scan the QR code, then send a message from your phone number to complete pairing.",
+    docsUrl: "https://docs.openclaw.ai/channels/whatsapp",
   },
   {
     id: "signal",
     label: "Signal",
     icon: "🔒",
-    setupType: "qr",
-    description: "Signal requires QR code scan via signal-cli.",
-    nextSteps: "Scan the QR code, then send a Signal message to the linked account to approve access.",
+    setupType: "manual",
+    description: "Signal setup is manual. Link and configure signal-cli first, then add the channel from the full Channels page.",
+    nextSteps: "Open the Signal setup guide, finish the signal-cli registration steps, then return to Channels to verify the runtime.",
+    docsUrl: "https://docs.openclaw.ai/channels/signal",
   },
   {
     id: "slack",
@@ -237,8 +245,12 @@ const CHANNELS: ChannelDef[] = [
     setupType: "token",
     tokenLabel: "Bot Token",
     tokenPlaceholder: "xoxb-...",
-    description: "Connect a Slack bot token so your workspace can chat with the agent.",
+    appTokenLabel: "App Token",
+    appTokenPlaceholder: "xapp-...",
+    requiresAppToken: true,
+    description: "Connect your Slack bot token and Socket Mode app token so your workspace can chat with the agent.",
     nextSteps: "Message the Slack bot in a DM or channel so the pairing approval appears here.",
+    docsUrl: "https://docs.openclaw.ai/channels/slack",
   },
 ];
 
@@ -465,11 +477,12 @@ export function OnboardingWizard({ onComplete }: { onComplete?: () => void }) {
 
   const [selectedChannel, setSelectedChannel] = useState<ChannelId | null>(null);
   const [channelToken, setChannelToken] = useState("");
+  const [channelAppToken, setChannelAppToken] = useState("");
   const [channelBusy, setChannelBusy] = useState(false);
   const [channelResult, setChannelResult] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [connectedChannel, setConnectedChannel] = useState<ChannelId | null>(null);
   const [showQrModal, setShowQrModal] = useState(false);
-  const [qrChannel, setQrChannel] = useState<"whatsapp" | "signal">("whatsapp");
+  const [qrChannel, setQrChannel] = useState<"whatsapp">("whatsapp");
 
   const [pairingRequests, setPairingRequests] = useState<PairingRequest[]>([]);
   const [approvingCode, setApprovingCode] = useState<string | null>(null);
@@ -752,6 +765,7 @@ export function OnboardingWizard({ onComplete }: { onComplete?: () => void }) {
 
   const handleConnectChannel = useCallback(async () => {
     if (!currentChannel || currentChannel.setupType !== "token" || !channelToken.trim()) return;
+    if (currentChannel.requiresAppToken && !channelAppToken.trim()) return;
 
     setChannelBusy(true);
     setChannelResult(null);
@@ -764,6 +778,7 @@ export function OnboardingWizard({ onComplete }: { onComplete?: () => void }) {
           action: "add",
           channel: currentChannel.id,
           token: channelToken.trim(),
+          ...(currentChannel.requiresAppToken ? { appToken: channelAppToken.trim() } : {}),
         }),
       });
       const data = await res.json();
@@ -786,7 +801,7 @@ export function OnboardingWizard({ onComplete }: { onComplete?: () => void }) {
     } finally {
       setChannelBusy(false);
     }
-  }, [channelToken, currentChannel]);
+  }, [channelAppToken, channelToken, currentChannel]);
 
   const handleApprovePairing = useCallback(async (request: PairingRequest) => {
     setApprovingCode(request.code);
@@ -1083,6 +1098,7 @@ export function OnboardingWizard({ onComplete }: { onComplete?: () => void }) {
                           onClick={() => {
                             setSelectedChannel(channel.id);
                             setChannelToken("");
+                            setChannelAppToken("");
                             setChannelResult(null);
                           }}
                           className={cn(
@@ -1101,22 +1117,55 @@ export function OnboardingWizard({ onComplete }: { onComplete?: () => void }) {
 
                   {currentChannel?.setupType === "token" && (
                     <div className="space-y-3">
+                      <p className="text-xs text-muted-foreground">{currentChannel.description}</p>
                       <label className="text-xs font-medium text-muted-foreground">{currentChannel.tokenLabel}</label>
-                      <div className="flex gap-2">
-                        <input
-                          type="password"
-                          value={channelToken}
-                          onChange={(event) => setChannelToken(event.target.value)}
-                          placeholder={currentChannel.tokenPlaceholder}
-                          className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground/40 focus:border-primary/50"
-                        />
+                      <input
+                        type="password"
+                        value={channelToken}
+                        onChange={(event) => setChannelToken(event.target.value)}
+                        placeholder={currentChannel.tokenPlaceholder}
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground/40 focus:border-primary/50"
+                      />
+                      {currentChannel.requiresAppToken && (
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-muted-foreground">
+                            {currentChannel.appTokenLabel || "App Token"}
+                          </label>
+                          <input
+                            type="password"
+                            value={channelAppToken}
+                            onChange={(event) => setChannelAppToken(event.target.value)}
+                            placeholder={currentChannel.appTokenPlaceholder || "xapp-..."}
+                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground/40 focus:border-primary/50"
+                          />
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between gap-3">
+                        {currentChannel.docsUrl ? (
+                          <a
+                            href={currentChannel.docsUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+                          >
+                            Open setup guide
+                          </a>
+                        ) : (
+                          <span />
+                        )}
                         <button
                           type="button"
                           onClick={handleConnectChannel}
-                          disabled={!channelToken.trim() || channelBusy}
+                          disabled={
+                            !channelToken.trim() ||
+                            (currentChannel.requiresAppToken && !channelAppToken.trim()) ||
+                            channelBusy
+                          }
                           className={cn(
                             "inline-flex min-w-[6rem] items-center justify-center rounded-full px-4 py-2 text-xs font-medium",
-                            !channelToken.trim() || channelBusy
+                            !channelToken.trim() ||
+                              (currentChannel.requiresAppToken && !channelAppToken.trim()) ||
+                              channelBusy
                               ? "cursor-not-allowed bg-muted text-muted-foreground"
                               : "bg-primary text-primary-foreground hover:opacity-90",
                           )}
@@ -1139,13 +1188,50 @@ export function OnboardingWizard({ onComplete }: { onComplete?: () => void }) {
                       <button
                         type="button"
                         onClick={() => {
-                          setQrChannel(currentChannel.id as "whatsapp" | "signal");
+                          setQrChannel("whatsapp");
                           setShowQrModal(true);
                         }}
                         className="rounded-full bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
                       >
                         Scan QR Code
                       </button>
+                      {currentChannel.docsUrl && (
+                        <a
+                          href={currentChannel.docsUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex text-xs text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                          Open setup guide
+                        </a>
+                      )}
+                    </div>
+                  )}
+
+                  {currentChannel?.setupType === "manual" && (
+                    <div className="space-y-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4">
+                      <p className="text-sm font-medium text-foreground">Manual setup required</p>
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        {currentChannel.description}
+                      </p>
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        {currentChannel.nextSteps}
+                      </p>
+                      <div className="flex items-center gap-3">
+                        {currentChannel.docsUrl && (
+                          <a
+                            href={currentChannel.docsUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                          >
+                            Open setup guide
+                          </a>
+                        )}
+                        <span className="text-xs text-muted-foreground">
+                          You can finish this later from the full Channels page.
+                        </span>
+                      </div>
                     </div>
                   )}
 

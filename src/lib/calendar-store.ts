@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
+import { getDefaultWorkspace } from "@/lib/paths";
 
 export type CalendarEntryKind = "reminder" | "event";
 export type CalendarEntryStatus = "scheduled" | "sent" | "done" | "cancelled" | "failed";
@@ -303,4 +304,144 @@ export function runReminderDispatch(entries: CalendarEntry[], nowIso = new Date(
     return next;
   });
   return { updated, dispatched };
+}
+
+export const CALENDAR_PROVIDERS = ["local", "google", "apple", "zoho"] as const;
+export type CalendarProvider = (typeof CALENDAR_PROVIDERS)[number];
+export type CalendarAccountConnection = "gog" | "oauth" | "caldav" | "api" | "manual";
+
+export type CalendarProviderSettings = {
+  enabled: boolean;
+};
+
+export type CalendarAccountRecord = {
+  id: string;
+  provider: CalendarProvider;
+  label: string;
+  connection: CalendarAccountConnection;
+  providerAccountId?: string;
+  enabled: boolean;
+  importEvents: boolean;
+  lastSyncedAt?: number;
+  lastSyncStatus?: "success" | "error";
+  lastSyncError?: string | null;
+  updatedAt: number;
+};
+
+export type CalendarStoreFile = {
+  version: 1;
+  entries: CalendarEntry[];
+  accounts: CalendarAccountRecord[];
+  providerSettings: Record<CalendarProvider, CalendarProviderSettings>;
+};
+
+export function isExternalCalendarProvider(value: string): value is Exclude<CalendarProvider, "local"> {
+  return value === "google" || value === "apple" || value === "zoho";
+}
+
+export function getCalendarProviderLabel(provider: CalendarProvider): string {
+  if (provider === "google") return "Google";
+  if (provider === "apple") return "Apple";
+  if (provider === "zoho") return "Zoho";
+  return "Mission Control";
+}
+
+function defaultProviderSettings(): Record<CalendarProvider, CalendarProviderSettings> {
+  return {
+    local: { enabled: true },
+    google: { enabled: true },
+    apple: { enabled: true },
+    zoho: { enabled: true },
+  };
+}
+
+export async function readCalendarStore(): Promise<CalendarStoreFile> {
+  const workspace = await getDefaultWorkspace();
+  const entries = await readCalendarEntries(workspace);
+  return {
+    version: 1,
+    entries,
+    accounts: [],
+    providerSettings: defaultProviderSettings(),
+  };
+}
+
+export async function saveCalendarStore(store: CalendarStoreFile): Promise<void> {
+  const workspace = await getDefaultWorkspace();
+  await writeCalendarEntries(workspace, store.entries);
+}
+
+export function summarizeCalendarStore(store: CalendarStoreFile) {
+  const now = Date.now();
+  const upcomingCount = store.entries.filter((entry) => new Date(entry.dueAt).getTime() >= now).length;
+  return {
+    totalEntries: store.entries.length,
+    upcomingCount,
+    accountCount: store.accounts.length,
+  };
+}
+
+export function listCalendarEvents(
+  store: CalendarStoreFile,
+  options?: number | { startMs?: number; endMs?: number; limit?: number }
+): CalendarEntry[] {
+  const startMs = typeof options === "object" && options?.startMs != null ? options.startMs : Number.NEGATIVE_INFINITY;
+  const endMs = typeof options === "object" && options?.endMs != null ? options.endMs : Number.POSITIVE_INFINITY;
+  const limit = typeof options === "number"
+    ? options
+    : (typeof options === "object" && options?.limit != null ? options.limit : 50);
+
+  return [...store.entries]
+    .filter((entry) => {
+      const due = new Date(entry.dueAt).getTime();
+      return Number.isFinite(due) && due >= startMs && due <= endMs;
+    })
+    .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime())
+    .slice(0, Math.max(1, limit));
+}
+
+type ImportedEventInput = {
+  externalId: string;
+  title: string;
+  startMs: number;
+  endMs?: number | null;
+  notes?: string;
+};
+
+export function replaceImportedEventsForAccount(
+  store: CalendarStoreFile,
+  params: {
+    provider: CalendarProvider;
+    accountId: string;
+    importedEvents: ImportedEventInput[];
+    syncedAt: number;
+  }
+): CalendarStoreFile {
+  const kept = store.entries.filter(
+    (entry) => !(entry.source === "provider" && entry.providerAccountId === params.accountId)
+  );
+
+  const syncedIso = new Date(params.syncedAt).toISOString();
+  const importedEntries: CalendarEntry[] = params.importedEvents.map((event) => ({
+    id: randomUUID(),
+    kind: "event",
+    title: String(event.title || "Imported event"),
+    notes: event.notes,
+    dueAt: new Date(event.startMs).toISOString(),
+    endAt: event.endMs ? new Date(event.endMs).toISOString() : undefined,
+    status: "scheduled",
+    createdAt: syncedIso,
+    updatedAt: syncedIso,
+    source: "provider",
+    provider: "caldav",
+    providerAccountId: params.accountId,
+    externalId: event.externalId,
+    readOnly: true,
+    lastSyncedAt: syncedIso,
+  }));
+
+  return {
+    ...store,
+    entries: [...kept, ...importedEntries],
+  };
 }

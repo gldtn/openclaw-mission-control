@@ -145,6 +145,16 @@ function persistState(state: PingChatState): void {
   }
 }
 
+/* ── Server snapshot (stable empty state for SSR) ── */
+
+const SERVER_PING_SNAPSHOT: PingChatState = Object.freeze({
+  messages: [],
+  agentId: "",
+  sending: false,
+  open: false,
+  unread: 0,
+});
+
 /* ── State initialization ── */
 
 const persisted = loadPersistedState();
@@ -189,6 +199,10 @@ function notifyDesktop(title: string, text: string, tag: string) {
 export const chatStore = {
   getSnapshot(): PingChatState {
     return pingState;
+  },
+
+  getServerSnapshot(): PingChatState {
+    return SERVER_PING_SNAPSHOT;
   },
 
   subscribe(listener: Listener): () => void {
@@ -265,6 +279,7 @@ export const chatStore = {
       if (res.body) {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
+        let lastPersist = 0;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -279,12 +294,26 @@ export const chatStore = {
             timestamp: Date.now(),
             agentId,
           };
+          const streamIdx = pingState.messages.findIndex((m) => m.id === assistantMsgId);
+          const streamUpdated = [...pingState.messages];
+          if (streamIdx >= 0) streamUpdated[streamIdx] = streamingMsg;
+          else streamUpdated.push(streamingMsg);
           pingState = {
             ...pingState,
-            messages: [...pingState.messages.filter((m) => m.id !== assistantMsgId), streamingMsg],
+            messages: streamUpdated,
           };
           emitPing();
+
+          // Debounce localStorage writes during streaming to at most once per 500ms
+          const now = Date.now();
+          if (now - lastPersist > 500) {
+            persistState(pingState);
+            lastPersist = now;
+          }
         }
+
+        // Always persist once when the stream completes
+        persistState(pingState);
       } else {
         text = await res.text();
       }
@@ -299,9 +328,13 @@ export const chatStore = {
       };
 
       const isStillOpen = pingState.open;
+      const finalIdx = pingState.messages.findIndex((m) => m.id === assistantMsgId);
+      const finalUpdated = [...pingState.messages];
+      if (finalIdx >= 0) finalUpdated[finalIdx] = assistantMsg;
+      else finalUpdated.push(assistantMsg);
       pingState = {
         ...pingState,
-        messages: [...pingState.messages.filter((m) => m.id !== assistantMsgId), assistantMsg],
+        messages: finalUpdated,
         sending: false,
         unread: isStillOpen ? 0 : pingState.unread + 1,
       };

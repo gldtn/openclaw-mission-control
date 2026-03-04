@@ -1,10 +1,11 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { DashboardView } from "@/components/dashboard-view";
 import { ChatView } from "@/components/chat-view";
 import { PanelErrorBoundary } from "@/components/panel-error-boundary";
+import { GatewayOfflineBanner } from "@/components/gateway-offline-banner";
 import { setChatActive } from "@/lib/chat-store";
 
 function SectionLoading() {
@@ -21,10 +22,6 @@ function SectionLoading() {
 
 const TasksView = dynamic(
   () => import("@/components/tasks-view").then((m) => m.TasksView),
-  { loading: () => <SectionLoading /> }
-);
-const CalendarView = dynamic(
-  () => import("@/components/calendar-view").then((m) => m.CalendarView),
   { loading: () => <SectionLoading /> }
 );
 const CronView = dynamic(
@@ -107,6 +104,10 @@ const WebSearchView = dynamic(
   () => import("@/components/web-search-view").then((m) => m.WebSearchView),
   { loading: () => <SectionLoading /> }
 );
+const CalendarView = dynamic(
+  () => import("@/components/calendar-view").then((m) => m.CalendarView),
+  { loading: () => <SectionLoading /> }
+);
 const SettingsView = dynamic(
   () => import("@/components/settings-view").then((m) => m.SettingsView),
   { loading: () => <SectionLoading /> }
@@ -164,7 +165,7 @@ export type DashboardSection =
   | "help";
 
 function SectionContent({ section }: { section: DashboardSection }) {
-  if (isAgentbayHosting && (section === "browser" || section === "tailscale")) {
+  if (isAgentbayHosting && section === "tailscale") {
     return <DashboardView />;
   }
 
@@ -216,7 +217,7 @@ function SectionContent({ section }: { section: DashboardSection }) {
     case "tailscale":
       return <TailscaleView />;
     case "browser":
-      return <BrowserRelayView />;
+      return <BrowserRelayView isHosted={isAgentbayHosting} />;
     case "search":
       return <WebSearchView />;
     case "settings":
@@ -236,10 +237,15 @@ function SectionContent({ section }: { section: DashboardSection }) {
 
 export function RouteSectionView({ section }: { section: DashboardSection }) {
   const isChatSection = section === "chat";
+  const [chatResetKey, setChatResetKey] = useState(0);
 
   useEffect(() => {
     setChatActive(isChatSection);
     return () => setChatActive(false);
+  }, [isChatSection]);
+
+  useEffect(() => {
+    if (isChatSection) setChatResetKey(k => k + 1);
   }, [isChatSection]);
 
   return (
@@ -247,13 +253,14 @@ export function RouteSectionView({ section }: { section: DashboardSection }) {
       <div
         className={isChatSection ? "flex flex-1 flex-col overflow-hidden" : "hidden"}
       >
-        <PanelErrorBoundary section="chat">
+        <PanelErrorBoundary key={chatResetKey} section="chat">
           <ChatView isVisible={isChatSection} />
         </PanelErrorBoundary>
       </div>
 
       {!isChatSection && (
         <PanelErrorBoundary key={section} section={section}>
+          {section !== "dashboard" && <GatewayOfflineBanner />}
           <SectionContent section={section} />
         </PanelErrorBoundary>
       )}

@@ -70,6 +70,6 @@ export class PanelErrorBoundary extends Component<Props, State> {
       );
     }
 
-    return <div key={this.state.retryKey} className="flex min-h-0 flex-1 flex-col">{this.props.children}</div>;
+    return <div key={this.state.retryKey} className="flex min-h-0 min-w-0 flex-1 flex-col">{this.props.children}</div>;
   }
 }

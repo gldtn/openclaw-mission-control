@@ -411,7 +411,7 @@ export async function POST(req: Request) {
 
     if (!plainText) {
       return new Response("Please send a message or attach a file.", {
-        status: 200,
+        status: 400,
         headers: { "Content-Type": "text/plain; charset=utf-8" },
       });
     }
@@ -446,7 +446,7 @@ export async function POST(req: Request) {
     const errMsg =
       err instanceof Error ? err.message : "Failed to get agent response";
     return new Response(`Error: ${errMsg}`, {
-      status: 200,
+      status: 500,
       headers: { "Content-Type": "text/plain; charset=utf-8" },
     });
   }

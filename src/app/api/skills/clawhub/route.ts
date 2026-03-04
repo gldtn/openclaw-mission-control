@@ -228,8 +228,21 @@ export async function GET(request: NextRequest) {
       nextCursor: parsed?.nextCursor || null,
     });
   } catch (err) {
+    if (isClawhubNotFound(err)) {
+      return NextResponse.json(
+        { error: "ClawHub CLI not found.", code: "CLAWHUB_NOT_FOUND" },
+        { status: 503 }
+      );
+    }
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
+}
+
+function isClawhubNotFound(err: unknown): boolean {
+  const e = err as NodeJS.ErrnoException;
+  if (e?.code === "ENOENT") return true;
+  const msg = (e?.message ?? String(err)).toLowerCase();
+  return msg.includes("enoent") && (msg.includes("clawhub") || msg.includes("spawn"));
 }
 
 export async function POST(request: NextRequest) {
@@ -285,6 +298,12 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
   } catch (err) {
+    if (isClawhubNotFound(err)) {
+      return NextResponse.json(
+        { error: "ClawHub CLI not found.", code: "CLAWHUB_NOT_FOUND" },
+        { status: 503 }
+      );
+    }
     const e = err as { message?: string; stdout?: string; stderr?: string };
     const details = [e.message, e.stderr, e.stdout].filter(Boolean).join("\n");
     return NextResponse.json({ error: details || String(err) }, { status: 500 });

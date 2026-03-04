@@ -1796,7 +1796,8 @@ export function ConfigEditor() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search settings..."
-                className="w-36 bg-transparent text-xs text-foreground/70 outline-none placeholder:text-muted-foreground/60"
+                aria-label="Search settings"
+                className="w-36 bg-transparent text-xs text-foreground/70 outline-none placeholder:text-muted-foreground/70"
               />
               {search && (
                 <button onClick={() => setSearch("")} className="text-muted-foreground/60 hover:text-muted-foreground">

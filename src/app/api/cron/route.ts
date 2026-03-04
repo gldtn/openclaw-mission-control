@@ -69,6 +69,8 @@ type CronRunResult = {
   alreadyRunning?: boolean;
 };
 
+type DeliveryMode = "announce" | "webhook" | "none";
+
 function formatChatHistoryAsText(messages: GatewayMessage[]): string {
   const lines: string[] = [];
   for (const msg of messages) {
@@ -88,6 +90,76 @@ function formatChatHistoryAsText(messages: GatewayMessage[]): string {
   return lines.join("\n").trim();
 }
 
+function hasOwn(obj: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function normalizeDeliveryMode(value: unknown): DeliveryMode | null {
+  const mode = String(value || "").trim().toLowerCase();
+  if (mode === "announce" || mode === "webhook" || mode === "none") {
+    return mode;
+  }
+  return null;
+}
+
+function isValidWebhookUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function buildDeliveryConfig(
+  params: Record<string, unknown>,
+  current?: CronJob["delivery"],
+): CronJob["delivery"] {
+  const deliveryMode =
+    normalizeDeliveryMode(params.deliveryMode) ??
+    (params.announce === true
+      ? "announce"
+      : params.announce === false
+        ? "none"
+        : normalizeDeliveryMode(current?.mode) ?? "none");
+
+  if (deliveryMode === "none") {
+    return { mode: "none" };
+  }
+
+  const rawTo = hasOwn(params, "to")
+    ? String(params.to || "").trim()
+    : String(current?.to || "").trim();
+  const bestEffort = hasOwn(params, "bestEffort")
+    ? Boolean(params.bestEffort)
+    : Boolean(current?.bestEffort);
+
+  if (deliveryMode === "webhook") {
+    if (!rawTo) {
+      throw new Error('Webhook delivery requires a target URL in "to".');
+    }
+    if (!isValidWebhookUrl(rawTo)) {
+      throw new Error("Webhook delivery URL must start with http:// or https://");
+    }
+    return {
+      mode: "webhook",
+      to: rawTo,
+      ...(bestEffort ? { bestEffort: true } : {}),
+    };
+  }
+
+  const rawChannel = hasOwn(params, "channel")
+    ? String(params.channel || "").trim()
+    : String(current?.channel || "").trim();
+
+  return {
+    mode: "announce",
+    ...(rawChannel ? { channel: rawChannel } : {}),
+    ...(rawTo ? { to: rawTo } : {}),
+    ...(bestEffort ? { bestEffort: true } : {}),
+  };
+}
+
 /**
  * Extract known delivery targets from:
  *   1. Existing cron jobs that already have `delivery.to` set
@@ -102,7 +174,7 @@ async function collectKnownTargets(): Promise<
   try {
     const data = await listCronJobs();
     for (const job of data.jobs || []) {
-      if (job.delivery?.to) {
+      if (job.delivery?.mode === "announce" && job.delivery?.to) {
         const ch = job.delivery.channel || detectChannel(job.delivery.to);
         targets.set(job.delivery.to, { channel: ch, source: `cron: ${job.name}` });
       }
@@ -142,16 +214,26 @@ async function collectKnownTargets(): Promise<
     /* ignore */
   }
 
-  return Array.from(targets.entries()).map(([target, info]) => ({
-    target,
-    channel: info.channel,
-    source: info.source,
-  }));
+  return Array.from(targets.entries())
+    .map(([target, info]) => ({
+      target,
+      channel: info.channel,
+      source: info.source,
+    }))
+    .sort((a, b) => {
+      const left = `${a.channel}\u0000${a.target}`.toLowerCase();
+      const right = `${b.channel}\u0000${b.target}`.toLowerCase();
+      return left.localeCompare(right);
+    });
 }
 
 function detectChannel(to: string): string {
   if (to.startsWith("telegram:")) return "telegram";
   if (to.startsWith("discord:")) return "discord";
+  if (to.startsWith("slack:")) return "slack";
+  if (to.startsWith("webchat:")) return "webchat";
+  if (to.startsWith("web:")) return "web";
+  if (to.startsWith("signal:")) return "signal";
   if (to.startsWith("+")) return "whatsapp";
   return "";
 }
@@ -213,6 +295,18 @@ function normalizeAtTime(value: string): string {
 
 async function listCronJobs(): Promise<CronList> {
   return gatewayCall<CronList>("cron.list", {}, 10000);
+}
+
+function isSystemManagedCronJob(job: CronJob): boolean {
+  const name = String(job.name || "").trim().toLowerCase();
+  const description = String(job.description || "").trim().toLowerCase();
+  return name.startsWith("mc-") && description.includes("mission control system-managed usage job");
+}
+
+function filterUserVisibleCronJobs(data: CronList): CronList {
+  return {
+    jobs: (data.jobs || []).filter((job) => !isSystemManagedCronJob(job)),
+  };
 }
 
 async function getCronJobById(id: string): Promise<CronJob | null> {
@@ -280,7 +374,7 @@ export async function GET(request: NextRequest) {
 
     // Default: list all jobs
     const data = await listCronJobs();
-    return NextResponse.json(data);
+    return NextResponse.json(filterUserVisibleCronJobs(data));
   } catch (err) {
     console.error("Cron GET error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });
@@ -384,21 +478,14 @@ export async function POST(request: NextRequest) {
           };
         }
 
-        if (params.announce === true) {
-          patch.delivery = {
-            mode: "announce",
-            channel:
-              params.channel !== undefined
-                ? String(params.channel)
-                : current.delivery.channel || "last",
-            ...(params.to !== undefined
-              ? { to: String(params.to) }
-              : current.delivery.to
-                ? { to: current.delivery.to }
-                : {}),
-          };
-        } else if (params.announce === false) {
-          patch.delivery = { mode: "none" };
+        if (
+          hasOwn(params, "deliveryMode") ||
+          hasOwn(params, "announce") ||
+          hasOwn(params, "channel") ||
+          hasOwn(params, "to") ||
+          hasOwn(params, "bestEffort")
+        ) {
+          patch.delivery = buildDeliveryConfig(params, current.delivery);
         }
 
         await gatewayCall("cron.update", { id, patch }, 10000);
@@ -453,15 +540,7 @@ export async function POST(request: NextRequest) {
           };
         }
 
-        const delivery =
-          params.deliveryMode === "announce"
-            ? {
-                mode: "announce",
-                channel: String(params.channel || "last"),
-                ...(params.to ? { to: String(params.to) } : {}),
-                ...(params.bestEffort ? { bestEffort: true } : {}),
-              }
-            : { mode: "none" };
+        const delivery = buildDeliveryConfig(params);
 
         const created = await gatewayCall<Record<string, unknown>>(
           "cron.add",

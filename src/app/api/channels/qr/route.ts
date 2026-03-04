@@ -1,5 +1,5 @@
 /**
- * SSE endpoint for streaming QR code login (WhatsApp / Signal).
+ * SSE endpoint for streaming QR code login (WhatsApp).
  *
  * Spawns `openclaw channels login --channel <ch>` as a long-lived process
  * and streams its stdout to the browser via Server-Sent Events. The CLI
@@ -19,7 +19,7 @@ import { getOpenClawBin } from "@/lib/paths";
 
 export const dynamic = "force-dynamic";
 
-const ALLOWED_CHANNELS = new Set(["whatsapp", "signal"]);
+const ALLOWED_CHANNELS = new Set(["whatsapp"]);
 const PROCESS_TIMEOUT_MS = 120_000; // 2 minutes
 const QR_DEBOUNCE_MS = 150;
 const KEEPALIVE_MS = 15_000;
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
 
   if (!ALLOWED_CHANNELS.has(channel)) {
     return Response.json(
-      { error: "QR login only supported for whatsapp and signal" },
+      { error: "QR login only supported for whatsapp" },
       { status: 400 },
     );
   }

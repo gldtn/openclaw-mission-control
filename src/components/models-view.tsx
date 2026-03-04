@@ -1855,7 +1855,7 @@ export function ModelsView() {
                 if (auditRequested) void fetchAudit(true);
               }}
               disabled={Boolean(busyKey)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900 disabled:opacity-40 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-stone-700 dark:hover:text-stone-100"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40 dark:border-[#2c343d] dark:bg-[#171a1d] dark:text-[#c7d0d9] dark:hover:bg-[#1e2227] dark:hover:text-[#f5f7fa]"
             >
               {busyKey || summaryLoading ? <BusyDots /> : <RefreshCw className="h-3.5 w-3.5" />}
               Refresh
@@ -1905,7 +1905,7 @@ export function ModelsView() {
           )}
 
           {/* Hero card */}
-          <div className="rounded-xl border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-700 dark:bg-stone-800">
+          <div className="rounded-xl border border-stone-200 bg-white p-5 shadow-sm dark:border-[#2c343d] dark:bg-[#171a1d]">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-lg font-semibold text-foreground">
@@ -1955,7 +1955,7 @@ export function ModelsView() {
                 type="button"
                 onClick={() => setPickerTarget({ kind: "default" })}
                 disabled={Boolean(busyKey)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-stone-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-stone-700 disabled:opacity-40 dark:border-stone-600 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-300"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-stone-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40 dark:border-[#2c343d] dark:bg-[#171a1d] dark:text-[#c7d0d9] dark:hover:bg-[#1e2227]"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
                 Change Model
@@ -2000,7 +2000,7 @@ export function ModelsView() {
                           type="button"
                           onClick={() => void removeDefaultFallback(fallback)}
                           disabled={Boolean(busyKey)}
-                          className="shrink-0 rounded p-1 text-muted-foreground/50 transition-colors hover:bg-muted/60 hover:text-red-400 disabled:opacity-40"
+                          className="shrink-0 rounded p-1 text-muted-foreground/50 transition-colors hover:bg-muted/60 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                         >
                           <X className="h-3 w-3" />
                         </button>
@@ -2013,7 +2013,7 @@ export function ModelsView() {
                 type="button"
                 onClick={() => setPickerTarget({ kind: "default-fallback" })}
                 disabled={Boolean(busyKey)}
-                className="mt-2 inline-flex items-center gap-1 rounded-md border border-border/50 bg-card px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent disabled:opacity-40"
+                className="mt-2 inline-flex items-center gap-1 rounded-md border border-border/50 bg-card px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
               >
                 <Plus className="h-3 w-3" />
                 Add Fallback
@@ -2138,7 +2138,7 @@ export function ModelsView() {
                         }
                       }}
                       className={cn(
-                        "flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs transition-colors",
+                        "flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                         isActive
                           ? "border-[var(--accent-brand-border)] bg-[var(--accent-brand-subtle)] text-foreground"
                           : connectSuccess === p
@@ -2177,7 +2177,7 @@ export function ModelsView() {
                 <button
                   type="button"
                   onClick={() => { setConnectProvider(null); setConnectKey(""); setConnectBaseUrl(""); setConnectShowKey(false); }}
-                  className="ml-auto rounded p-0.5 text-muted-foreground/40 hover:text-foreground/60"
+                  className="ml-auto rounded p-0.5 text-muted-foreground/40 hover:text-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -2194,7 +2194,8 @@ export function ModelsView() {
                     onChange={(e) => setConnectBaseUrl(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && canSubmit) { e.preventDefault(); handleConnectProvider(); } }}
                     placeholder={meta.baseUrlPlaceholder || "https://api.example.com/v1"}
-                    className="w-full rounded-lg border border-border bg-card px-3 py-2.5 text-xs font-mono text-foreground/90 placeholder:text-muted-foreground/30 focus:border-[var(--accent-brand-border)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-brand-ring)]"
+                    aria-label="Endpoint URL"
+                    className="w-full rounded-lg border border-border bg-card px-3 py-2.5 text-xs font-mono text-foreground/90 placeholder:text-muted-foreground/50 focus:border-[var(--accent-brand-border)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-brand-ring)]"
                     autoFocus
                   />
                   <p className="mt-1 text-[10px] text-muted-foreground/40">
@@ -2215,13 +2216,14 @@ export function ModelsView() {
                     onChange={(e) => setConnectKey(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && canSubmit) { e.preventDefault(); handleConnectProvider(); } }}
                     placeholder={meta?.keyHint || "Paste API key..."}
-                    className="w-full rounded-lg border border-border bg-card px-3 py-2.5 pr-9 text-xs font-mono text-foreground/90 placeholder:text-muted-foreground/30 focus:border-[var(--accent-brand-border)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-brand-ring)]"
+                    aria-label={`API Key${meta?.keyOptional ? " (optional)" : ""}`}
+                    className="w-full rounded-lg border border-border bg-card px-3 py-2.5 pr-9 text-xs font-mono text-foreground/90 placeholder:text-muted-foreground/50 focus:border-[var(--accent-brand-border)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-brand-ring)]"
                     autoFocus={!meta?.needsBaseUrl}
                   />
                   <button
                     type="button"
                     onClick={() => setConnectShowKey(!connectShowKey)}
-                    className="absolute right-2.5 bottom-2.5 text-muted-foreground/40 hover:text-foreground/60"
+                    className="absolute right-2.5 bottom-2.5 text-muted-foreground/40 hover:text-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     {connectShowKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                   </button>
@@ -2284,7 +2286,7 @@ export function ModelsView() {
           <button
             type="button"
             onClick={() => setAdvancedOpen(!advancedOpen)}
-            className="flex w-full items-center justify-between px-5 py-3.5 transition-colors hover:bg-foreground/5"
+            className="flex w-full items-center justify-between px-5 py-3.5 transition-colors hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <div className="flex items-center gap-2">
               <h2 className="text-xs font-semibold text-foreground">Advanced Settings</h2>
@@ -2315,7 +2317,7 @@ export function ModelsView() {
                     type="button"
                     onClick={() => setAdvancedTab(tab.key)}
                     className={cn(
-                      "flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium transition-colors border-b-2",
+                      "flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium transition-colors border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                       advancedTab === tab.key
                         ? "border-[var(--accent-brand)] text-[var(--accent-brand-text)]"
                         : "border-transparent text-muted-foreground hover:text-foreground hover:bg-foreground/5",
@@ -2372,7 +2374,7 @@ export function ModelsView() {
                                     type="button"
                                     onClick={() => void resetAgentToDefaults(agent)}
                                     disabled={Boolean(busyKey)}
-                                    className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                                    className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                                   >
                                     <RotateCcw className="h-3 w-3" />
                                     Reset
@@ -2398,7 +2400,7 @@ export function ModelsView() {
                                   setPickerTarget({ kind: "agent", agent })
                                 }
                                 disabled={Boolean(busyKey)}
-                                className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-card px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent disabled:opacity-40"
+                                className="inline-flex items-center gap-1 rounded-md border border-border/50 bg-card px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                               >
                                 <RefreshCw className="h-3 w-3" />
                                 Change
@@ -2419,7 +2421,7 @@ export function ModelsView() {
                                       type="button"
                                       onClick={() => void removeAgentFallback(agent, fb)}
                                       disabled={Boolean(busyKey)}
-                                      className="rounded p-0.5 hover:text-red-400 disabled:opacity-40"
+                                      className="rounded p-0.5 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                                     >
                                       <X className="h-2.5 w-2.5" />
                                     </button>
@@ -2434,7 +2436,7 @@ export function ModelsView() {
                                     })
                                   }
                                   disabled={Boolean(busyKey)}
-                                  className="inline-flex items-center gap-0.5 rounded-md border border-dashed border-border/50 px-2 py-0.5 text-xs text-muted-foreground/60 transition-colors hover:bg-accent disabled:opacity-40"
+                                  className="inline-flex items-center gap-0.5 rounded-md border border-dashed border-border/50 px-2 py-0.5 text-xs text-muted-foreground/60 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                                 >
                                   <Plus className="h-3 w-3" />
                                   Add
@@ -2478,7 +2480,7 @@ export function ModelsView() {
                             type="button"
                             onClick={() => void fetchAllModels(true)}
                             disabled={allModelsLoading || Boolean(busyKey)}
-                            className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                            className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                           >
                             {allModelsLoading ? <BusyDots /> : <RefreshCw className="h-3 w-3" />}
                             Refresh
@@ -2487,7 +2489,7 @@ export function ModelsView() {
                             type="button"
                             onClick={() => void scanModels()}
                             disabled={Boolean(busyKey)}
-                            className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                            className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                           >
                             {busyKey === "catalog:scan" ? (
                               <BusyDots />
@@ -2510,7 +2512,7 @@ export function ModelsView() {
                               type="button"
                               onClick={() => void removeAllowedModel(entry)}
                               disabled={Boolean(busyKey)}
-                              className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-50"
+                              className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                             >
                               {getFriendlyModelName(entry)}
                               <Trash2 className="h-3 w-3" />
@@ -2526,7 +2528,7 @@ export function ModelsView() {
                         type="button"
                         onClick={() => setPickerTarget({ kind: "allowlist" })}
                         disabled={Boolean(busyKey)}
-                        className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                        className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                       >
                         <Plus className="h-3.5 w-3.5" />
                         Add from Catalog
@@ -2537,6 +2539,7 @@ export function ModelsView() {
                           value={customModelToAdd}
                           onChange={(e) => setCustomModelToAdd(e.target.value)}
                           placeholder="provider/model-name"
+                          aria-label="Custom model to add (provider/model-name)"
                           className="rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-foreground outline-none transition-colors focus:border-[var(--accent-brand-border)] w-56"
                         />
                         <button
@@ -2546,7 +2549,7 @@ export function ModelsView() {
                             setCustomModelToAdd("");
                           }}
                           disabled={!customModelToAdd.trim() || Boolean(busyKey)}
-                          className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                          className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                         >
                           <Plus className="h-3.5 w-3.5" />
                           Add Custom
@@ -2592,7 +2595,7 @@ export function ModelsView() {
                           type="button"
                           onClick={() => setPickerTarget({ kind: "image-model" })}
                           disabled={Boolean(busyKey)}
-                          className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                          className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                         >
                           <ImageIcon className="h-3.5 w-3.5" />
                           Choose model
@@ -2619,7 +2622,7 @@ export function ModelsView() {
                                   type="button"
                                   onClick={() => void removeImageFallback(fallback)}
                                   disabled={Boolean(busyKey)}
-                                  className="rounded p-0.5 transition-colors hover:bg-muted/60 hover:text-red-400 disabled:opacity-40"
+                                  className="rounded p-0.5 transition-colors hover:bg-muted/60 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                                 >
                                   <X className="h-2.5 w-2.5" />
                                 </button>
@@ -2631,7 +2634,7 @@ export function ModelsView() {
                           type="button"
                           onClick={() => setPickerTarget({ kind: "image-fallback" })}
                           disabled={Boolean(busyKey)}
-                          className="mt-2 inline-flex items-center gap-1 rounded-md border border-dashed border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent disabled:opacity-40"
+                          className="mt-2 inline-flex items-center gap-1 rounded-md border border-dashed border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                         >
                           <Plus className="h-3.5 w-3.5" />
                           Add image fallback
@@ -2661,6 +2664,7 @@ export function ModelsView() {
                           value={heartbeatEveryDraft}
                           onChange={(e) => setHeartbeatEveryDraft(e.target.value)}
                           placeholder="1h"
+                          aria-label="Heartbeat interval (e.g. 1h)"
                           className="rounded-md border border-border bg-card px-2.5 py-1.5 text-xs text-foreground outline-none transition-colors focus:border-[var(--accent-brand-border)]"
                         />
                         <button
@@ -2671,7 +2675,7 @@ export function ModelsView() {
                             !heartbeatEveryDraft.trim() ||
                             heartbeatEveryDraft.trim() === heartbeatEvery
                           }
-                          className="inline-flex items-center justify-center gap-1 rounded-md border border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                          className="inline-flex items-center justify-center gap-1 rounded-md border border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                         >
                           Save interval
                         </button>
@@ -2679,7 +2683,7 @@ export function ModelsView() {
                           type="button"
                           onClick={() => setPickerTarget({ kind: "heartbeat-model" })}
                           disabled={Boolean(busyKey)}
-                          className="inline-flex items-center justify-center gap-1 rounded-md border border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                          className="inline-flex items-center justify-center gap-1 rounded-md border border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                         >
                           <RefreshCw className="h-3.5 w-3.5" />
                           Choose model
@@ -2699,7 +2703,7 @@ export function ModelsView() {
                             type="button"
                             onClick={() => void setHeartbeatModel("")}
                             disabled={Boolean(busyKey)}
-                            className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                            className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                           >
                             <RotateCcw className="h-3.5 w-3.5" />
                             Reset model
@@ -2722,7 +2726,7 @@ export function ModelsView() {
                             onClick={() => void setCatalogMode(mode)}
                             disabled={Boolean(busyKey)}
                             className={cn(
-                              "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                              "rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                               modelsCatalogConfig.mode === mode
                                 ? "bg-card text-foreground shadow-sm"
                                 : "text-muted-foreground hover:text-foreground",
@@ -2770,7 +2774,7 @@ export function ModelsView() {
                                     setProviderDraftCustomId("");
                                     loadProviderDraft(entry.provider);
                                   }}
-                                  className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50"
+                                  className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                 >
                                   Edit
                                 </button>
@@ -2778,7 +2782,7 @@ export function ModelsView() {
                                   type="button"
                                   onClick={() => void removeProviderConfig(entry.provider)}
                                   disabled={Boolean(busyKey)}
-                                  className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                                  className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                                 >
                                   <Trash2 className="h-3.5 w-3.5" />
                                   Remove
@@ -2805,6 +2809,7 @@ export function ModelsView() {
                               loadProviderDraft(next);
                             }
                           }}
+                          aria-label="Select provider to configure"
                           className="rounded-md border border-border bg-card px-2.5 py-1.5 text-xs text-foreground outline-none transition-colors focus:border-[var(--accent-brand-border)]"
                         >
                           <option value="">Select provider...</option>
@@ -2827,6 +2832,7 @@ export function ModelsView() {
                               if (next) loadProviderDraft(next);
                             }}
                             placeholder="provider id (for example my-proxy)"
+                            aria-label="Custom provider ID"
                             className="rounded-md border border-border bg-card px-2.5 py-1.5 text-xs text-foreground outline-none transition-colors focus:border-[var(--accent-brand-border)]"
                           />
                         ) : (
@@ -2839,6 +2845,7 @@ export function ModelsView() {
                       <textarea
                         value={providerDraftJson}
                         onChange={(e) => setProviderDraftJson(e.target.value)}
+                        aria-label="Provider configuration (JSON)"
                         className="mt-2 h-40 w-full rounded-md border border-border bg-card px-3 py-2 font-mono text-xs text-foreground outline-none transition-colors focus:border-[var(--accent-brand-border)]"
                       />
                       {providerDraftError && (
@@ -2850,7 +2857,7 @@ export function ModelsView() {
                           type="button"
                           onClick={applyProviderTemplate}
                           disabled={!providerDraftResolvedId}
-                          className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                          className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                         >
                           Use template
                         </button>
@@ -2858,7 +2865,7 @@ export function ModelsView() {
                           type="button"
                           onClick={() => void saveProviderConfig()}
                           disabled={!providerDraftResolvedId || Boolean(busyKey)}
-                          className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                          className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                         >
                           Save override
                         </button>
@@ -2866,7 +2873,7 @@ export function ModelsView() {
                           type="button"
                           onClick={() => void removeProviderConfig(providerDraftResolvedId)}
                           disabled={!providerDraftHasOverride || Boolean(busyKey)}
-                          className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                          className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                         >
                           Remove current override
                         </button>
@@ -2908,7 +2915,7 @@ export function ModelsView() {
                                 );
                               }}
                               disabled={Boolean(busyKey)}
-                              className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 disabled:opacity-50"
+                              className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                             >
                               <span className="font-semibold text-foreground">{alias}</span>
                               <span className="text-muted-foreground/60">&rarr;</span>
@@ -2928,11 +2935,13 @@ export function ModelsView() {
                           value={aliasName}
                           onChange={(e) => setAliasName(e.target.value)}
                           placeholder="Alias name (e.g. fast)"
+                          aria-label="Alias name"
                           className="rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-foreground outline-none transition-colors focus:border-[var(--accent-brand-border)]"
                         />
                         <select
                           value={aliasTarget}
                           onChange={(e) => setAliasTarget(e.target.value)}
+                          aria-label="Target model for alias"
                           className="rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-foreground outline-none transition-colors focus:border-[var(--accent-brand-border)]"
                         >
                           <option value="">Target model...</option>
@@ -2958,7 +2967,7 @@ export function ModelsView() {
                             setAliasTarget("");
                           }}
                           disabled={!aliasName.trim() || !aliasTarget || Boolean(busyKey)}
-                          className="inline-flex items-center justify-center gap-1 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                          className="inline-flex items-center justify-center gap-1 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                         >
                           <Plus className="h-3.5 w-3.5" />
                           Add
@@ -2999,6 +3008,7 @@ export function ModelsView() {
                           <select
                             value={orderAgentId}
                             onChange={(e) => setOrderAgentId(e.target.value)}
+                            aria-label="Agent for auth order override"
                             className="rounded-lg border border-border bg-muted/50 px-2.5 py-2 text-xs text-foreground outline-none transition-colors focus:border-[var(--accent-brand-border)]"
                           >
                             {sortedAgents.map((agent) => (
@@ -3010,6 +3020,7 @@ export function ModelsView() {
                           <select
                             value={orderProvider}
                             onChange={(e) => setOrderProvider(e.target.value)}
+                            aria-label="Provider for auth order override"
                             className="rounded-lg border border-border bg-muted/50 px-2.5 py-2 text-xs text-foreground outline-none transition-colors focus:border-[var(--accent-brand-border)]"
                           >
                             {availableProviders.map((provider) => (
@@ -3024,6 +3035,7 @@ export function ModelsView() {
                           <select
                             value={orderSelectedProfileId}
                             onChange={(e) => setOrderSelectedProfileId(e.target.value)}
+                            aria-label="Select profile to add to auth order"
                             className="rounded-lg border border-border bg-muted/50 px-2.5 py-2 text-xs text-foreground outline-none transition-colors focus:border-[var(--accent-brand-border)]"
                           >
                             <option value="">Select profile id...</option>
@@ -3037,7 +3049,7 @@ export function ModelsView() {
                             type="button"
                             onClick={() => addOrderProfile(orderSelectedProfileId)}
                             disabled={!orderSelectedProfileId || orderBusy}
-                            className="inline-flex items-center justify-center gap-1 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                            className="inline-flex items-center justify-center gap-1 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                           >
                             <Plus className="h-3.5 w-3.5" />
                             Add
@@ -3065,7 +3077,7 @@ export function ModelsView() {
                                     type="button"
                                     onClick={() => moveOrderProfile(profileId, -1)}
                                     disabled={index === 0 || orderBusy}
-                                    className="rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground disabled:opacity-40"
+                                    className="rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                                   >
                                     Up
                                   </button>
@@ -3073,7 +3085,7 @@ export function ModelsView() {
                                     type="button"
                                     onClick={() => moveOrderProfile(profileId, 1)}
                                     disabled={index === orderDraft.length - 1 || orderBusy}
-                                    className="rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground disabled:opacity-40"
+                                    className="rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                                   >
                                     Down
                                   </button>
@@ -3081,7 +3093,7 @@ export function ModelsView() {
                                     type="button"
                                     onClick={() => removeOrderProfile(profileId)}
                                     disabled={orderBusy}
-                                    className="inline-flex items-center rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground disabled:opacity-40"
+                                    className="inline-flex items-center rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                                   >
                                     <Trash2 className="h-3 w-3" />
                                   </button>
@@ -3096,7 +3108,7 @@ export function ModelsView() {
                             type="button"
                             onClick={() => void saveAuthOrder()}
                             disabled={orderBusy || orderDraft.length === 0}
-                            className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                            className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                           >
                             {orderBusy ? <BusyDots /> : <ListOrdered className="h-3.5 w-3.5" />}
                             Save order
@@ -3105,7 +3117,7 @@ export function ModelsView() {
                             type="button"
                             onClick={() => void clearAuthOrder()}
                             disabled={orderBusy}
-                            className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-40"
+                            className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
                           >
                             Clear override
                           </button>
@@ -3118,7 +3130,7 @@ export function ModelsView() {
                       <button
                         type="button"
                         onClick={() => setAuthAuditOpen((prev) => !prev)}
-                        className="flex w-full items-center justify-between rounded-lg border border-border/60 bg-muted/10 px-3 py-2 text-left transition-colors hover:bg-muted/20"
+                        className="flex w-full items-center justify-between rounded-lg border border-border/60 bg-muted/10 px-3 py-2 text-left transition-colors hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         <div>
                           <h3 className="text-xs font-semibold text-foreground">
@@ -3162,7 +3174,7 @@ export function ModelsView() {
                             <button
                               type="button"
                               onClick={() => setRevealModelSecrets((prev) => !prev)}
-                              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/40"
+                              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             >
                               {revealModelSecrets ? (
                                 <EyeOff className="h-3.5 w-3.5" />

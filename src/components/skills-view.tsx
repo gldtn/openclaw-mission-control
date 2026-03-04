@@ -1011,6 +1011,7 @@ function ClawHubPanel({
   const [sortBy, setSortBy] = useState<"trending" | "stars" | "downloads" | "name">("trending");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [clawhubNotFound, setClawhubNotFound] = useState(false);
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<"install" | "update" | "uninstall" | null>(null);
 
@@ -1044,7 +1045,14 @@ function ClawHubPanel({
     try {
       const res = await fetch("/api/skills/clawhub?action=list");
       const data = await res.json();
+      if (data?.code === "CLAWHUB_NOT_FOUND") {
+        setClawhubNotFound(true);
+        setError(null);
+        setInstalled({});
+        return;
+      }
       if (!res.ok || data?.error) {
+        setClawhubNotFound(false);
         throw new Error(String(data?.error || `HTTP ${res.status}`));
       }
       const map: Record<string, string> = {};
@@ -1055,6 +1063,7 @@ function ClawHubPanel({
       }
       setInstalled(map);
       setError(null);
+      setClawhubNotFound(false);
     } catch (err) {
       setInstalled({});
       setError(String(err));
@@ -1066,7 +1075,15 @@ function ClawHubPanel({
     try {
       const res = await fetch("/api/skills/clawhub?action=explore&limit=28&sort=trending");
       const data = await res.json();
+      if (data?.code === "CLAWHUB_NOT_FOUND") {
+        setClawhubNotFound(true);
+        setError(null);
+        setItems([]);
+        setLoading(false);
+        return;
+      }
       if (!res.ok || data?.error) {
+        setClawhubNotFound(false);
         throw new Error(String(data?.error || `HTTP ${res.status}`));
       }
       const normalized: ClawHubItem[] = (data.items || []).map((item: {
@@ -1091,6 +1108,7 @@ function ClawHubPanel({
       })).filter((item: ClawHubItem) => item.slug);
       setItems(normalized);
       setError(null);
+      setClawhubNotFound(false);
     } catch (err) {
       setItems([]);
       setError(String(err));
@@ -1106,7 +1124,15 @@ function ClawHubPanel({
     try {
       const res = await fetch(`/api/skills/clawhub?action=search&q=${encodeURIComponent(q)}&limit=28`);
       const data = await res.json();
+      if (data?.code === "CLAWHUB_NOT_FOUND") {
+        setClawhubNotFound(true);
+        setError(null);
+        setItems([]);
+        setLoading(false);
+        return;
+      }
       if (!res.ok || data?.error) {
+        setClawhubNotFound(false);
         throw new Error(String(data?.error || `HTTP ${res.status}`));
       }
       const normalized: ClawHubItem[] = (data.items || []).map((item: {
@@ -1127,6 +1153,7 @@ function ClawHubPanel({
       })).filter((item: ClawHubItem) => item.slug);
       setItems(normalized);
       setError(null);
+      setClawhubNotFound(false);
     } catch (err) {
       setItems([]);
       setError(String(err));
@@ -1144,6 +1171,13 @@ function ClawHubPanel({
         body: JSON.stringify({ action: "install", slug, version, force }),
       });
       const data = await res.json();
+      if (data?.code === "CLAWHUB_NOT_FOUND") {
+        setClawhubNotFound(true);
+        onAction("Error: Cannot find ClawHub. Did you install it?");
+        setBusySlug(null);
+        setBusyAction(null);
+        return;
+      }
       if (!res.ok || !data.ok) {
         const errMsg = String(data?.error || "install failed");
         const isSuspicious = /suspicious|Use --force/i.test(errMsg);
@@ -1175,7 +1209,10 @@ function ClawHubPanel({
         body: JSON.stringify({ action: "update", slug }),
       });
       const data = await res.json();
-      if (!res.ok || !data.ok) {
+      if (data?.code === "CLAWHUB_NOT_FOUND") {
+        setClawhubNotFound(true);
+        onAction("Error: Cannot find ClawHub. Did you install it?");
+      } else if (!res.ok || !data.ok) {
         onAction(`Error: ${data.error || "update failed"}`);
       } else {
         onAction(`Updated ${slug}`);
@@ -1240,6 +1277,17 @@ function ClawHubPanel({
 
   return (
     <div className="space-y-3">
+      {clawhubNotFound && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-200">
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-medium">Cannot find ClawHub</p>
+            <p className="text-xs mt-0.5 text-amber-700 dark:text-amber-300">
+              Did you install it? Make sure the <code className="font-mono bg-amber-500/20 px-1 rounded">clawhub</code> command is on your PATH.
+            </p>
+          </div>
+        </div>
+      )}
       <p className="text-xs text-muted-foreground">Browse and install skills from the catalog. Install adds them to your project; then turn them on from Local Skills.</p>
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5 min-w-44">

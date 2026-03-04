@@ -6,6 +6,10 @@
 
 Monitor your AI agents in real time. Chat with them. Schedule jobs. Track costs. Manage memory. All from your browser, all running on your machine.
 
+## Please, consider supporting me and buy me a Claude Code Subscription!
+[![Buy Me a Claude Code Subscription!](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-orange?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/robsanna)
+
+
 **你的 [OpenClaw](https://github.com/openclaw) 指挥中心。一屏总览，一键掌控。**
 
 实时监控你的 AI 智能体、对话、调度任务、追踪费用、管理记忆 —— 一切在浏览器中完成，一切在你的设备上运行。

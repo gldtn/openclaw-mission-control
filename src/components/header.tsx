@@ -57,7 +57,7 @@ type AgentInfo = {
 /* ── Agent Chat Panel (persistent, global state) ── */
 
 function useChatState() {
-  return useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot, chatStore.getSnapshot);
+  return useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot, chatStore.getServerSnapshot);
 }
 
 function formatTime(ts: number, timeFormat: TimeFormatPreference) {
@@ -121,7 +121,6 @@ export function AgentChatPanel() {
   useEffect(() => {
     const el = document.createElement("div");
     el.id = "agent-chat-portal-root";
-    el.setAttribute("aria-hidden", "true");
     document.body.appendChild(el);
     setPortalRoot(el);
     return () => {
@@ -221,7 +220,7 @@ export function AgentChatPanel() {
         top: 56,
         zIndex: 99999,
       }}
-      className="flex max-h-screen w-full max-w-md flex-col overflow-hidden rounded-2xl border border-foreground/10 bg-card/95 shadow-2xl backdrop-blur-md animate-in slide-in-from-top-2 fade-in duration-200"
+      className="flex max-h-screen w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-foreground/10 bg-card/95 shadow-2xl backdrop-blur-md animate-in slide-in-from-top-2 fade-in duration-200 sm:w-auto sm:max-w-md"
     >
       {/* Header */}
       <div className="flex shrink-0 items-center justify-between border-b border-foreground/10 px-4 py-2.5">
@@ -242,8 +241,9 @@ export function AgentChatPanel() {
             <button
               type="button"
               onClick={() => chatStore.clearMessages()}
-              className="rounded-md p-1.5 text-muted-foreground/40 transition hover:bg-muted/60 hover:text-muted-foreground"
+              className="rounded-md p-1.5 text-muted-foreground/40 transition hover:bg-muted/60 hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               title="Clear chat"
+              aria-label="Clear chat history"
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
@@ -251,7 +251,8 @@ export function AgentChatPanel() {
           <button
             type="button"
             onClick={() => chatStore.close()}
-            className="rounded-md p-1.5 text-muted-foreground/40 transition hover:bg-muted/60 hover:text-muted-foreground"
+            className="rounded-md p-1.5 text-muted-foreground/40 transition hover:bg-muted/60 hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="Close chat panel"
           >
             <X className="h-3.5 w-3.5" />
           </button>
@@ -264,7 +265,7 @@ export function AgentChatPanel() {
           <button
             type="button"
             onClick={() => setShowAgentPicker(!showAgentPicker)}
-            className="flex w-full items-center gap-2 rounded-lg border border-foreground/10 bg-foreground/5 px-2.5 py-1.5 text-left transition-colors hover:bg-foreground/5"
+            className="flex w-full items-center gap-2 rounded-lg border border-foreground/10 bg-foreground/5 px-2.5 py-1.5 text-left transition-colors hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <span className="text-xs text-muted-foreground">Agent:</span>
             <span className="flex-1 truncate text-xs font-medium text-foreground/70">
@@ -289,7 +290,7 @@ export function AgentChatPanel() {
                     setShowAgentPicker(false);
                   }}
                   className={cn(
-                    "flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-muted",
+                    "flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     a.id === chat.agentId && "bg-muted"
                   )}
                 >
@@ -364,7 +365,7 @@ export function AgentChatPanel() {
             type="button"
             onClick={handleSend}
             disabled={!prompt.trim() || !chat.agentId || chat.sending}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {chat.sending ? (
               <span className="inline-flex items-center gap-0.5">
@@ -686,7 +687,7 @@ export function Header() {
             data-chat-toggle
             onClick={() => chatStore.toggle()}
             className={cn(
-              "relative flex h-9 items-center gap-1.5 rounded-md border border-stone-200 bg-white px-3 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900 dark:border-[#2c343d] dark:bg-[#171a1d] dark:text-[#d6dce3] dark:hover:bg-[#20252a] dark:hover:text-[#f5f7fa]",
+              "relative flex h-9 items-center gap-1.5 rounded-md border border-stone-200 bg-white px-3 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-[#2c343d] dark:bg-[#171a1d] dark:text-[#d6dce3] dark:hover:bg-[#20252a] dark:hover:text-[#f5f7fa]",
               chat.open
                 ? "border-stone-300 bg-stone-100 text-stone-900 dark:border-[#38414b] dark:bg-[#20252a] dark:text-[#f5f7fa]"
                 : ""
@@ -712,7 +713,7 @@ export function Header() {
           <button
             type="button"
             onClick={() => setSearchOpen(true)}
-            className="flex h-9 items-center gap-2 rounded-md border border-stone-200 bg-white px-3 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900 dark:border-[#2c343d] dark:bg-[#171a1d] dark:text-[#d6dce3] dark:hover:bg-[#20252a] dark:hover:text-[#f5f7fa]"
+            className="flex h-9 items-center gap-2 rounded-md border border-stone-200 bg-white px-3 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-[#2c343d] dark:bg-[#171a1d] dark:text-[#d6dce3] dark:hover:bg-[#20252a] dark:hover:text-[#f5f7fa]"
           >
             <Search className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Search</span>
@@ -727,10 +728,18 @@ export function Header() {
           <div className="group relative">
             <button
               type="button"
-              onClick={togglePower}
+              onClick={() => {
+                if (isAlive) {
+                  if (window.confirm("Stop the gateway? All running agents and sessions will be interrupted.")) {
+                    togglePower();
+                  }
+                } else {
+                  togglePower();
+                }
+              }}
               disabled={powerBusy}
               className={cn(
-                "flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors disabled:opacity-50",
+                "flex h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 isAlive
                   ? "border border-red-300 bg-red-500 text-white hover:bg-red-600"
                   : "border border-emerald-300 bg-emerald-500 text-white hover:bg-emerald-600"

@@ -982,7 +982,8 @@ export function MemoryView() {
                 placeholder="Search memory files, agents, workspaces..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/60"
+                aria-label="Search memory files, agents, workspaces"
+                className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/70"
               />
             </div>
           </div>
@@ -1312,6 +1313,7 @@ export function MemoryView() {
                                         setRenaming(null);
                                     }}
                                     onBlur={() => void renameEntry(e, renameValue)}
+                                    aria-label="Rename file"
                                     className="flex-1 bg-transparent text-sm text-foreground/90 outline-none"
                                     autoFocus
                                   />

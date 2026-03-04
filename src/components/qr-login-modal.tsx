@@ -12,7 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 
 type QrLoginModalProps = {
-  channel: "whatsapp" | "signal";
+  channel: "whatsapp";
   account?: string;
   onSuccess?: () => void;
   onClose: () => void;
@@ -22,7 +22,6 @@ type StreamState = "connecting" | "scanning" | "success" | "error";
 
 const CHANNEL_LABELS: Record<QrLoginModalProps["channel"], string> = {
   whatsapp: "WhatsApp",
-  signal: "Signal",
 };
 
 export function QrLoginModal({

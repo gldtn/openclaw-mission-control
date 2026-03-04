@@ -19,6 +19,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import dagre from "dagre";
 import {
   Bot,
   MessageSquare,
@@ -51,12 +52,39 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { requestRestart } from "@/lib/restart-store";
 import { SectionBody, SectionHeader, SectionLayout } from "@/components/section-layout";
 import { InlineSpinner, LoadingState } from "@/components/ui/loading-state";
 import { SubagentsManagerView } from "@/components/subagents-manager-view";
+
+const POSITIONS_STORAGE_KEY = "mc-agents-node-positions";
+
+function loadSavedPositions(): Record<string, { x: number; y: number }> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(POSITIONS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function savePositions(positions: Record<string, { x: number; y: number }>) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(POSITIONS_STORAGE_KEY, JSON.stringify(positions));
+  } catch { /* quota exceeded — ignore */ }
+}
+
+function clearSavedPositions() {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(POSITIONS_STORAGE_KEY);
+  } catch { /* ignore */ }
+}
 
 /* ================================================================
    Types
@@ -383,7 +411,8 @@ function buildGraph(
   selectedId: string | null,
   onSelectAgent: (id: string) => void,
   selectedWorkspacePath: string | null,
-  onSelectWorkspace: (workspacePath: string) => void
+  onSelectWorkspace: (workspacePath: string) => void,
+  savedPositions?: Record<string, { x: number; y: number }>
 ): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
@@ -430,20 +459,12 @@ function buildGraph(
     agents[0] ||
     null;
 
-  // ── Dynamic layout ──
-  // Center everything around (0, 0) so fitView works well.
-  // Layers left→right: Channels → Gateway → Agents → Workspaces
-  const AGENT_SPACING_Y = 160;
-  const SUB_AGENT_OFFSET_X = 50;
-  const SUB_AGENT_OFFSET_Y = 170;
+  // ── Dagre-based automatic layout ──
+  // Uses dagre graph layout to prevent overlaps at any scale.
+  // Layers left→right: Channels → Gateway → Agents (+subs) → Workspaces
   const RUNTIME_SUBAGENT_OFFSET_X = 290;
   const RUNTIME_SUBAGENT_SPACING_Y = 94;
 
-  const GATEWAY_X = 0;
-  const GATEWAY_Y = 0;
-  const AGENT_X = 320;
-  const CHANNEL_X = -350;
-  const WORKSPACE_X = 650;
   const gatewayEdgeStyle = { stroke: "var(--border)", strokeWidth: 1.5 };
   const gatewayEdgeMarker = {
     type: MarkerType.ArrowClosed,
@@ -452,28 +473,172 @@ function buildGraph(
     height: 14,
   } as const;
 
-  // ── 1. Gateway node (center hub) ──
+  // Node dimension hints for dagre (approximate card sizes)
+  const AGENT_NODE_W = 240;
+  const AGENT_NODE_H = 110;
+  const GATEWAY_NODE_W = 160;
+  const GATEWAY_NODE_H = 80;
+  const CHANNEL_NODE_W = 140;
+  const CHANNEL_NODE_H = 60;
+  const WORKSPACE_NODE_W = 180;
+  const WORKSPACE_NODE_H = 70;
+  const RUNTIME_NODE_W = 200;
+  const RUNTIME_NODE_H = 70;
+
+  // Build dagre graph for all core nodes (gateway, agents, channels, workspaces, runtime)
+  const Graph = dagre.graphlib?.Graph;
+  const layoutFn = dagre.layout;
+  const useDagre = Boolean(Graph && layoutFn);
+  const dagreGraph = useDagre ? new Graph!() : null;
+
+  if (dagreGraph) {
+    dagreGraph.setGraph({
+      rankdir: "LR",
+      nodesep: 50,
+      ranksep: 120,
+      marginx: 30,
+      marginy: 30,
+    });
+    dagreGraph.setDefaultEdgeLabel(() => ({}));
+  }
+
+  // ── Register all nodes with dagre ──
+
+  // Gateway
+  const gatewayId = "gateway";
+  if (dagreGraph) dagreGraph.setNode(gatewayId, { width: GATEWAY_NODE_W, height: GATEWAY_NODE_H });
+
+  // All agents (top-level and sub)
+  for (const agent of agents) {
+    const nodeId = `agent-${agent.id}`;
+    if (dagreGraph) dagreGraph.setNode(nodeId, { width: AGENT_NODE_W, height: AGENT_NODE_H });
+  }
+
+  // Channels
+  const channels = Array.from(channelMap.entries()).map(([channel, accountIds]) => [
+    channel,
+    Array.from(accountIds),
+  ] as const);
+  for (const [ch] of channels) {
+    if (dagreGraph) dagreGraph.setNode(`ch-${ch}`, { width: CHANNEL_NODE_W, height: CHANNEL_NODE_H });
+  }
+
+  // Workspaces
+  const workspaces = Array.from(workspaceMap.entries());
+  workspaces.forEach((_ws, i) => {
+    if (dagreGraph) dagreGraph.setNode(`ws-${i}`, { width: WORKSPACE_NODE_W, height: WORKSPACE_NODE_H });
+  });
+
+  // Runtime subagents
+  const runtimeNodeIds: string[] = [];
+  for (const parent of agents) {
+    const runtimeSubs = (parent.runtimeSubagents || [])
+      .filter((s) => s.status === "running")
+      .slice(0, 6);
+    for (const sub of runtimeSubs) {
+      const runtimeNodeId = `runtime-subagent-${sub.sessionKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+      runtimeNodeIds.push(runtimeNodeId);
+      if (dagreGraph) dagreGraph.setNode(runtimeNodeId, { width: RUNTIME_NODE_W, height: RUNTIME_NODE_H });
+    }
+  }
+
+  // ── Register all edges with dagre ──
+
+  // Channel → Gateway (so channels rank left of gateway)
+  for (const [ch] of channels) {
+    if (dagreGraph) dagreGraph.setEdge(`ch-${ch}`, gatewayId);
+  }
+
+  // Gateway → top-level agents
+  for (const agent of topLevelAgents) {
+    if (dagreGraph) dagreGraph.setEdge(gatewayId, `agent-${agent.id}`);
+  }
+
+  // Gateway → sub-agents (so they're at the same rank as their peers)
+  for (const sub of subAgents) {
+    if (dagreGraph) dagreGraph.setEdge(gatewayId, `agent-${sub.id}`);
+  }
+
+  // Parent → sub-agent
+  for (const sub of subAgents) {
+    const parent = agents.find((a) => a.subagents.includes(sub.id));
+    if (parent && dagreGraph) {
+      dagreGraph.setEdge(`agent-${parent.id}`, `agent-${sub.id}`);
+    }
+  }
+
+  // Agent → workspace
+  workspaces.forEach(([ws], i) => {
+    for (const a of agents) {
+      if (a.workspace === ws && dagreGraph) {
+        dagreGraph.setEdge(`agent-${a.id}`, `ws-${i}`);
+      }
+    }
+  });
+
+  // Parent agent → runtime subagent
+  for (const parent of agents) {
+    const runtimeSubs = (parent.runtimeSubagents || [])
+      .filter((s) => s.status === "running")
+      .slice(0, 6);
+    for (const sub of runtimeSubs) {
+      const runtimeNodeId = `runtime-subagent-${sub.sessionKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+      if (dagreGraph) dagreGraph.setEdge(`agent-${parent.id}`, runtimeNodeId);
+    }
+  }
+
+  // ── Run dagre layout ──
+  const dagrePositions = new Map<string, { x: number; y: number }>();
+  if (dagreGraph && layoutFn) {
+    try {
+      layoutFn(dagreGraph);
+      for (const nodeId of dagreGraph.nodes()) {
+        const node = dagreGraph.node(nodeId);
+        if (node && typeof node.x === "number" && typeof node.y === "number") {
+          dagrePositions.set(nodeId, {
+            x: node.x - (node.width ?? 200) / 2,
+            y: node.y - (node.height ?? 100) / 2,
+          });
+        }
+      }
+    } catch {
+      // Fall through to manual fallback positions
+    }
+  }
+
+  // Fallback position helper (if dagre unavailable or fails)
+  const FALLBACK_GATEWAY_X = 0;
+  const FALLBACK_GATEWAY_Y = 0;
+  const FALLBACK_AGENT_X = 320;
+  const FALLBACK_AGENT_SPACING_Y = 160;
+
+  function getPosition(nodeId: string, fallbackX: number, fallbackY: number) {
+    // User-saved positions take priority over dagre layout
+    if (savedPositions && savedPositions[nodeId]) return savedPositions[nodeId];
+    return dagrePositions.get(nodeId) || { x: fallbackX, y: fallbackY };
+  }
+
+  // ── 1. Gateway node ──
   nodes.push({
-    id: "gateway",
+    id: gatewayId,
     type: "gateway",
-    position: { x: GATEWAY_X, y: GATEWAY_Y },
+    position: getPosition(gatewayId, FALLBACK_GATEWAY_X, FALLBACK_GATEWAY_Y),
     data: { agentCount: agents.length, owner: data.owner || "" },
     draggable: true,
   });
 
-  // ── 2. Top-level agents, spread vertically around gateway ──
-  const topCount = topLevelAgents.length;
-  const topStartY = GATEWAY_Y - ((topCount - 1) * AGENT_SPACING_Y) / 2;
-
-  for (let i = 0; i < topLevelAgents.length; i++) {
-    const agent = topLevelAgents[i];
+  // ── 2. All agents (top-level and sub-agents) ──
+  for (const agent of agents) {
+    const nodeId = `agent-${agent.id}`;
     const idx = agents.indexOf(agent);
-    const ay = topStartY + i * AGENT_SPACING_Y;
+    const isSub = subagentIds.has(agent.id);
+    const fallbackIdx = isSub ? subAgents.indexOf(agent) : topLevelAgents.indexOf(agent);
+    const fallbackY = FALLBACK_GATEWAY_Y + fallbackIdx * FALLBACK_AGENT_SPACING_Y;
 
     nodes.push({
-      id: `agent-${agent.id}`,
+      id: nodeId,
       type: "agent",
-      position: { x: AGENT_X, y: ay },
+      position: getPosition(nodeId, FALLBACK_AGENT_X + (isSub ? 60 : 0), fallbackY),
       data: {
         agent,
         idx,
@@ -486,41 +651,17 @@ function buildGraph(
     // Gateway → Agent
     edges.push({
       id: `gw-${agent.id}`,
-      source: "gateway",
-      target: `agent-${agent.id}`,
+      source: gatewayId,
+      target: nodeId,
       type: "default",
       style: gatewayEdgeStyle,
       markerEnd: gatewayEdgeMarker,
     });
   }
 
-  // ── 3. Sub-agents: position below their parent ──
+  // ── 3. Sub-agent delegation edges ──
   for (const sub of subAgents) {
     const parent = agents.find((a) => a.subagents.includes(sub.id));
-    const parentNode = nodes.find((n) => n.id === `agent-${parent?.id}`);
-    const px = parentNode?.position.x ?? AGENT_X;
-    const py = parentNode?.position.y ?? GATEWAY_Y;
-    const idx = agents.indexOf(sub);
-    // Offset right and down from parent
-    const subIdx = parent?.subagents.indexOf(sub.id) ?? 0;
-
-    nodes.push({
-      id: `agent-${sub.id}`,
-      type: "agent",
-      position: {
-        x: px + SUB_AGENT_OFFSET_X + subIdx * 30,
-        y: py + SUB_AGENT_OFFSET_Y,
-      },
-      data: {
-        agent: sub,
-        idx,
-        selected: selectedId === sub.id,
-        onClick: () => onSelectAgent(sub.id),
-      },
-      draggable: true,
-    });
-
-    // Parent → Sub-agent (delegation hierarchy)
     if (parent) {
       edges.push({
         id: `sub-${parent.id}-${sub.id}`,
@@ -542,43 +683,25 @@ function buildGraph(
         },
       });
     }
-
-    // Also connect sub-agent to gateway (same gateway hierarchy style)
-    edges.push({
-      id: `gw-${sub.id}`,
-      source: "gateway",
-      target: `agent-${sub.id}`,
-      style: gatewayEdgeStyle,
-      markerEnd: gatewayEdgeMarker,
-    });
   }
 
-  // ── 3b. Runtime spawned subagents from gateway sessions ──
+  // ── 3b. Runtime spawned subagents ──
   for (const parent of agents) {
     const runtimeSubs = (parent.runtimeSubagents || [])
       .filter((s) => s.status === "running")
       .slice(0, 6);
     if (runtimeSubs.length === 0) continue;
 
-    const parentNode = nodes.find((n) => n.id === `agent-${parent.id}`);
-    if (!parentNode) continue;
-    const px = parentNode.position.x;
-    const py = parentNode.position.y;
-    const staticChildren = subAgents.filter((s) => {
-      const parentForSub = agents.find((a) => a.subagents.includes(s.id));
-      return parentForSub?.id === parent.id;
-    }).length;
-    const runtimeStartY = py + SUB_AGENT_OFFSET_Y + Math.max(0, staticChildren) * 72;
-
     runtimeSubs.forEach((sub, idx) => {
       const runtimeNodeId = `runtime-subagent-${sub.sessionKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+      const parentNode = nodes.find((n) => n.id === `agent-${parent.id}`);
+      const fallbackX = (parentNode?.position.x ?? FALLBACK_AGENT_X) + RUNTIME_SUBAGENT_OFFSET_X;
+      const fallbackY = (parentNode?.position.y ?? 0) + (idx + 1) * RUNTIME_SUBAGENT_SPACING_Y;
+
       nodes.push({
         id: runtimeNodeId,
         type: "runtimeSubagent",
-        position: {
-          x: px + RUNTIME_SUBAGENT_OFFSET_X,
-          y: runtimeStartY + idx * RUNTIME_SUBAGENT_SPACING_Y,
-        },
+        position: getPosition(runtimeNodeId, fallbackX, fallbackY),
         data: {
           parentAgentId: parent.id,
           shortId: sub.shortId,
@@ -618,21 +741,17 @@ function buildGraph(
     });
   }
 
-  // ── 4. Channel nodes (left of gateway) ──
-  const channels = Array.from(channelMap.entries()).map(([channel, accountIds]) => [
-    channel,
-    Array.from(accountIds),
-  ] as const);
-  const chCount = channels.length;
-  const chSpacing = Math.max(100, 180);
-  const chStartY = GATEWAY_Y - ((chCount - 1) * chSpacing) / 2;
+  // ── 4. Channel nodes (positioned by dagre) ──
+  const FALLBACK_CHANNEL_X = -350;
+  const chFallbackSpacing = 180;
 
   channels.forEach(([ch, accountIds], i) => {
     const nodeId = `ch-${ch}`;
+    const fallbackY = -((channels.length - 1) * chFallbackSpacing) / 2 + i * chFallbackSpacing;
     nodes.push({
       id: nodeId,
       type: "channel",
-      position: { x: CHANNEL_X, y: chStartY + i * chSpacing },
+      position: getPosition(nodeId, FALLBACK_CHANNEL_X, fallbackY),
       data: { channel: ch, accountIds },
       draggable: true,
     });
@@ -671,18 +790,17 @@ function buildGraph(
     });
   });
 
-  // ── 5. Workspace nodes (right of agents) ──
-  const workspaces = Array.from(workspaceMap.entries());
-  const wsCount = workspaces.length;
-  const wsSpacing = Math.max(100, 180);
-  const wsStartY = GATEWAY_Y - ((wsCount - 1) * wsSpacing) / 2;
+  // ── 5. Workspace nodes (positioned by dagre) ──
+  const FALLBACK_WORKSPACE_X = 650;
+  const wsFallbackSpacing = 180;
 
   workspaces.forEach(([ws, agentNames], i) => {
     const nodeId = `ws-${i}`;
+    const fallbackY = -((workspaces.length - 1) * wsFallbackSpacing) / 2 + i * wsFallbackSpacing;
     nodes.push({
       id: nodeId,
       type: "workspace",
-      position: { x: WORKSPACE_X, y: wsStartY + i * wsSpacing },
+      position: getPosition(nodeId, FALLBACK_WORKSPACE_X, fallbackY),
       data: {
         path: ws,
         agentNames,
@@ -1086,6 +1204,7 @@ function FlowViewInner({
   onSelectWorkspace: (workspacePath: string) => void;
 }) {
   const { fitView } = useReactFlow();
+  const [savedPos, setSavedPos] = useState<Record<string, { x: number; y: number }>>(loadSavedPositions);
 
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
     () =>
@@ -1094,9 +1213,10 @@ function FlowViewInner({
         selectedId,
         onSelect,
         selectedWorkspacePath,
-        onSelectWorkspace
+        onSelectWorkspace,
+        savedPos
       ),
-    [data, selectedId, onSelect, selectedWorkspacePath, onSelectWorkspace]
+    [data, selectedId, onSelect, selectedWorkspacePath, onSelectWorkspace, savedPos]
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
@@ -1109,7 +1229,8 @@ function FlowViewInner({
       selectedId,
       onSelect,
       selectedWorkspacePath,
-      onSelectWorkspace
+      onSelectWorkspace,
+      savedPos
     );
     setNodes(newNodes);
     setEdges(newEdges);
@@ -1119,26 +1240,36 @@ function FlowViewInner({
     onSelect,
     selectedWorkspacePath,
     onSelectWorkspace,
+    savedPos,
     setNodes,
     setEdges,
   ]);
 
-  // Re-fit whenever nodes change (after React Flow has measured them)
-  const onNodesChangeWrapped = useCallback(
-    (changes: Parameters<typeof onNodesChange>[0]) => {
-      onNodesChange(changes);
+  // Persist node positions when user finishes dragging
+  const onNodeDragStop = useCallback(
+    (_event: React.MouseEvent, node: Node) => {
+      setSavedPos((prev) => {
+        const next = { ...prev, [node.id]: { x: node.position.x, y: node.position.y } };
+        savePositions(next);
+        return next;
+      });
     },
-    [onNodesChange]
+    []
   );
+
+  const handleResetLayout = useCallback(() => {
+    clearSavedPositions();
+    setSavedPos({});
+  }, []);
 
   return (
     <ReactFlow
       nodes={nodes}
       edges={edges}
-      onNodesChange={onNodesChangeWrapped}
+      onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
+      onNodeDragStop={onNodeDragStop}
       onInit={() => {
-        // Fit after init with staggered attempts
         setTimeout(() => fitView({ padding: 0.15 }), 0);
         setTimeout(() => fitView({ padding: 0.15, duration: 200 }), 300);
       }}
@@ -1156,6 +1287,18 @@ function FlowViewInner({
         showInteractive={false}
         className="!bg-card dark:!bg-zinc-900 !border-border !shadow-xl [&>button]:!bg-secondary dark:[&>button]:!bg-zinc-800 [&>button]:!border-border [&>button]:!text-muted-foreground [&>button:hover]:!bg-accent dark:[&>button:hover]:!bg-zinc-700"
       />
+      {Object.keys(savedPos).length > 0 && (
+        <div className="absolute top-3 right-3 z-10">
+          <button
+            onClick={handleResetLayout}
+            className="flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm hover:bg-accent hover:text-foreground transition-colors dark:bg-zinc-900 dark:hover:bg-zinc-800"
+            title="Reset to automatic layout"
+          >
+            <RotateCcw className="h-3 w-3" />
+            Reset layout
+          </button>
+        </div>
+      )}
     </ReactFlow>
   );
 }
@@ -1474,7 +1617,8 @@ function ModelPicker({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search models..."
-              className="flex-1 bg-transparent text-xs text-foreground/90 placeholder:text-muted-foreground/40 outline-none"
+              aria-label="Search models"
+              className="flex-1 bg-transparent text-xs text-foreground/90 placeholder:text-muted-foreground/60 outline-none"
             />
             {search && (
               <button type="button" onClick={() => setSearch("")} className="text-muted-foreground/40 hover:text-foreground/60">
@@ -1653,7 +1797,8 @@ function ModelPicker({
                     onChange={(e) => setApiKey(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleSaveKey(); } }}
                     placeholder={PROVIDER_META[addingProvider]?.keyHint || "Paste API key..."}
-                    className="w-full rounded-lg border border-foreground/10 bg-card px-3 py-2 pr-8 text-xs font-mono text-foreground/90 placeholder:text-muted-foreground/30 focus:border-[var(--accent-brand-border)] focus:outline-none"
+                    aria-label="API key"
+                    className="w-full rounded-lg border border-foreground/10 bg-card px-3 py-2 pr-8 text-xs font-mono text-foreground/90 placeholder:text-muted-foreground/50 focus:border-[var(--accent-brand-border)] focus:outline-none"
                     autoFocus
                   />
                   <button
@@ -1999,7 +2144,8 @@ function ChannelBindingPicker({
                   onChange={(e) => setAccountId(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleBindChannel(selectedChannel); } }}
                   placeholder="Account ID (optional — leave empty for all)"
-                  className="flex-1 rounded-lg border border-foreground/10 bg-card px-3 py-2 text-xs text-foreground/90 placeholder:text-muted-foreground/40 focus:border-[var(--accent-brand-border)] focus:outline-none"
+                  aria-label="Account ID (optional)"
+                  className="flex-1 rounded-lg border border-foreground/10 bg-card px-3 py-2 text-xs text-foreground/90 placeholder:text-muted-foreground/60 focus:border-[var(--accent-brand-border)] focus:outline-none"
                   autoFocus
                   disabled={disabled}
                 />
@@ -2039,7 +2185,8 @@ function ChannelBindingPicker({
                       onChange={(e) => setTokenInput(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter" && tokenInput.trim()) { e.preventDefault(); handleSetupToken(); } }}
                       placeholder={selectedChannel.tokenPlaceholder || "Paste token here..."}
-                      className="w-full rounded-lg border border-foreground/10 bg-card px-3 py-2 text-xs font-mono text-foreground/90 placeholder:text-muted-foreground/30 focus:border-[var(--accent-brand-border)] focus:outline-none"
+                      aria-label={selectedChannel.tokenLabel || "Token"}
+                      className="w-full rounded-lg border border-foreground/10 bg-card px-3 py-2 text-xs font-mono text-foreground/90 placeholder:text-muted-foreground/50 focus:border-[var(--accent-brand-border)] focus:outline-none"
                       autoFocus
                       disabled={saving}
                     />
@@ -2054,7 +2201,8 @@ function ChannelBindingPicker({
                         value={appTokenInput}
                         onChange={(e) => setAppTokenInput(e.target.value)}
                         placeholder="xapp-..."
-                        className="w-full rounded-lg border border-foreground/10 bg-card px-3 py-2 text-xs font-mono text-foreground/90 placeholder:text-muted-foreground/30 focus:border-[var(--accent-brand-border)] focus:outline-none"
+                        aria-label="App Token (Socket Mode)"
+                        className="w-full rounded-lg border border-foreground/10 bg-card px-3 py-2 text-xs font-mono text-foreground/90 placeholder:text-muted-foreground/50 focus:border-[var(--accent-brand-border)] focus:outline-none"
                         disabled={saving}
                       />
                     </div>
@@ -2122,20 +2270,30 @@ function ChannelBindingPicker({
               {selectedChannel.setupType === "cli" && (
                 <div className="space-y-2">
                   <div className="rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2">
-                    <p className="text-xs text-muted-foreground/60 mb-1">
-                      Run this command in the Terminal:
-                    </p>
-                    <code className="block rounded bg-black/30 px-2 py-1.5 text-xs font-mono text-emerald-400">
-                      {selectedChannel.setupCommand}
-                    </code>
+                    {selectedChannel.setupCommand ? (
+                      <>
+                        <p className="text-xs text-muted-foreground/60 mb-1">
+                          Run this command in the Terminal:
+                        </p>
+                        <code className="block rounded bg-black/30 px-2 py-1.5 text-xs font-mono text-emerald-400">
+                          {selectedChannel.setupCommand}
+                        </code>
+                      </>
+                    ) : (
+                      <p className="text-xs text-muted-foreground/70">
+                        {selectedChannel.setupHint || "Manual setup is required. Follow the official docs for this channel."}
+                      </p>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
-                    <Link
-                      href="/terminal"
-                      className="rounded-lg bg-primary text-primary-foreground px-3 py-2 text-xs font-medium transition-colors hover:bg-primary/90 inline-flex items-center gap-1.5"
-                    >
-                      Open Terminal
-                    </Link>
+                    {selectedChannel.setupCommand ? (
+                      <Link
+                        href="/terminal"
+                        className="rounded-lg bg-primary text-primary-foreground px-3 py-2 text-xs font-medium transition-colors hover:bg-primary/90 inline-flex items-center gap-1.5"
+                      >
+                        Open Terminal
+                      </Link>
+                    ) : null}
                     <a
                       href={selectedChannel.docsUrl}
                       target="_blank"
@@ -2367,7 +2525,7 @@ function AddAgentModal({
                 value={name}
                 onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
                 placeholder="e.g. work, research, creative"
-                className="w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2.5 text-sm text-foreground/90 placeholder:text-muted-foreground/40 focus:border-[var(--accent-brand-border)] focus:outline-none"
+                className="w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2.5 text-sm text-foreground/90 placeholder:text-muted-foreground/60 focus:border-[var(--accent-brand-border)] focus:outline-none"
                 disabled={busy}
               />
               <p className="mt-1 text-xs text-muted-foreground/50">
@@ -2384,7 +2542,7 @@ function AddAgentModal({
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 placeholder={name ? `e.g. ${name.charAt(0).toUpperCase() + name.slice(1)}` : "Friendly name in UI"}
-                className="w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2.5 text-sm text-foreground/90 placeholder:text-muted-foreground/40 focus:border-[var(--accent-brand-border)] focus:outline-none"
+                className="w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2.5 text-sm text-foreground/90 placeholder:text-muted-foreground/60 focus:border-[var(--accent-brand-border)] focus:outline-none"
                 disabled={busy}
               />
             </div>
@@ -2456,7 +2614,7 @@ function AddAgentModal({
                     value={workspace}
                     onChange={(e) => setWorkspace(e.target.value)}
                     placeholder={`~/.openclaw/workspace-${name || "<name>"}`}
-                    className="w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2 text-xs font-mono text-foreground/80 placeholder:text-muted-foreground/40 focus:border-[var(--accent-brand-border)] focus:outline-none"
+                    className="w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2 text-xs font-mono text-foreground/80 placeholder:text-muted-foreground/60 focus:border-[var(--accent-brand-border)] focus:outline-none"
                     disabled={busy}
                   />
                   <p className="mt-1 text-xs text-muted-foreground/40">
@@ -2472,7 +2630,7 @@ function AddAgentModal({
                     value={agentDir}
                     onChange={(e) => setAgentDir(e.target.value)}
                     placeholder={`~/.openclaw/agents/${name || "<name>"}/agent`}
-                    className="w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2 text-xs font-mono text-foreground/80 placeholder:text-muted-foreground/40 focus:border-[var(--accent-brand-border)] focus:outline-none"
+                    className="w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2 text-xs font-mono text-foreground/80 placeholder:text-muted-foreground/60 focus:border-[var(--accent-brand-border)] focus:outline-none"
                     disabled={busy}
                   />
                   <p className="mt-1 text-xs text-muted-foreground/40">
@@ -2955,7 +3113,7 @@ function EditAgentModal({
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 placeholder={agent.id}
-                className="mt-1.5 w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2 text-sm text-foreground/90 placeholder:text-muted-foreground/40 focus:border-[var(--accent-brand-border)] focus:outline-none"
+                className="mt-1.5 w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2 text-sm text-foreground/90 placeholder:text-muted-foreground/60 focus:border-[var(--accent-brand-border)] focus:outline-none"
                 disabled={mutating}
               />
             </label>
@@ -2968,7 +3126,7 @@ function EditAgentModal({
                   value={identityName}
                   onChange={(e) => setIdentityName(e.target.value)}
                   placeholder={agent.name}
-                  className="mt-1.5 w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2 text-xs text-foreground/90 placeholder:text-muted-foreground/40 focus:border-[var(--accent-brand-border)] focus:outline-none"
+                  className="mt-1.5 w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2 text-xs text-foreground/90 placeholder:text-muted-foreground/60 focus:border-[var(--accent-brand-border)] focus:outline-none"
                   disabled={mutating}
                 />
               </label>
@@ -2979,7 +3137,7 @@ function EditAgentModal({
                   value={identityEmoji}
                   onChange={(e) => setIdentityEmoji(e.target.value)}
                   placeholder={agent.emoji}
-                  className="mt-1.5 w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2 text-xs text-foreground/90 placeholder:text-muted-foreground/40 focus:border-[var(--accent-brand-border)] focus:outline-none"
+                  className="mt-1.5 w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2 text-xs text-foreground/90 placeholder:text-muted-foreground/60 focus:border-[var(--accent-brand-border)] focus:outline-none"
                   disabled={mutating}
                 />
               </label>
@@ -2990,7 +3148,7 @@ function EditAgentModal({
                   value={identityTheme}
                   onChange={(e) => setIdentityTheme(e.target.value)}
                   placeholder={agent.identityTheme || "default"}
-                  className="mt-1.5 w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2 text-xs text-foreground/90 placeholder:text-muted-foreground/40 focus:border-[var(--accent-brand-border)] focus:outline-none"
+                  className="mt-1.5 w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2 text-xs text-foreground/90 placeholder:text-muted-foreground/60 focus:border-[var(--accent-brand-border)] focus:outline-none"
                   disabled={mutating}
                 />
               </label>
@@ -3001,7 +3159,7 @@ function EditAgentModal({
                   value={identityAvatar}
                   onChange={(e) => setIdentityAvatar(e.target.value)}
                   placeholder={agent.identityAvatar || "avatars/agent.png"}
-                  className="mt-1.5 w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2 text-xs text-foreground/90 placeholder:text-muted-foreground/40 focus:border-[var(--accent-brand-border)] focus:outline-none"
+                  className="mt-1.5 w-full rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2 text-xs text-foreground/90 placeholder:text-muted-foreground/60 focus:border-[var(--accent-brand-border)] focus:outline-none"
                   disabled={mutating}
                 />
               </label>
@@ -3260,7 +3418,8 @@ function EditAgentModal({
                   value={deleteConfirmText}
                   onChange={(e) => setDeleteConfirmText(e.target.value)}
                   placeholder={agent.id}
-                  className="w-full rounded-lg border border-red-500/30 bg-black/20 px-3 py-2 text-xs text-red-100 placeholder:text-red-200/40 focus:border-red-400/60 focus:outline-none"
+                  aria-label={`Type ${agent.id} to confirm deletion`}
+                  className="w-full rounded-lg border border-red-500/30 bg-black/20 px-3 py-2 text-xs text-red-100 placeholder:text-red-200/60 focus:border-red-400/60 focus:outline-none"
                   disabled={mutating}
                 />
                 <div className="flex items-center gap-2">
@@ -3636,7 +3795,8 @@ function WorkspaceFilesModal({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Filter files by path..."
-              className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/50"
+              aria-label="Filter files by path"
+              className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/60"
             />
           </div>
           <p className="text-xs text-muted-foreground/70">

@@ -13,6 +13,7 @@ import {
   Play,
   Terminal,
   X,
+  Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SectionBody, SectionHeader, SectionLayout } from "@/components/section-layout";
@@ -83,7 +84,7 @@ function sourceClass(source: string): string {
     case "system":
       return "text-rose-700 dark:text-rose-300";
     default:
-      return "text-stone-600 dark:text-stone-300";
+      return "text-stone-600 dark:text-[#c7d0d9]";
   }
 }
 
@@ -125,6 +126,7 @@ export function LogsView() {
   const [loading, setLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [sourceFilter, setSourceFilter] = useState("");
   const [levelFilter, setLevelFilter] = useState("");
   const [showFilters, setShowFilters] = useState(false);
@@ -133,10 +135,16 @@ export function LogsView() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Debounce search: only update debouncedSearch 300ms after the user stops typing
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(id);
+  }, [search]);
+
   const fetchLogs = useCallback(async () => {
     try {
       const params = new URLSearchParams({ limit: String(limit) });
-      if (search) params.set("search", search);
+      if (debouncedSearch) params.set("search", debouncedSearch);
       if (sourceFilter) params.set("source", sourceFilter);
       if (levelFilter) params.set("level", levelFilter);
       const res = await fetch(`/api/logs?${params}`);
@@ -148,7 +156,7 @@ export function LogsView() {
     } catch {
       setLoading(false);
     }
-  }, [limit, search, sourceFilter, levelFilter]);
+  }, [limit, debouncedSearch, sourceFilter, levelFilter]);
 
   // Initial fetch + auto-refresh
   useEffect(() => {
@@ -182,6 +190,7 @@ export function LogsView() {
 
   const clearFilters = useCallback(() => {
     setSearch("");
+    setDebouncedSearch("");
     setSourceFilter("");
     setLevelFilter("");
   }, []);
@@ -193,6 +202,16 @@ export function LogsView() {
     () => [...entries].reverse(),
     [entries]
   );
+
+  const downloadLogs = useCallback(() => {
+    const blob = new Blob([JSON.stringify(displayEntries, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `openclaw-logs-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [displayEntries]);
 
   return (
     <SectionLayout>
@@ -207,7 +226,7 @@ export function LogsView() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1.5">
-              <span className="rounded-full bg-stone-100 px-2.5 py-0.5 text-xs font-semibold text-stone-600 dark:bg-stone-800 dark:text-stone-300">
+              <span className="rounded-full bg-stone-100 px-2.5 py-0.5 text-xs font-semibold text-stone-600 dark:bg-[#171a1d] dark:text-[#c7d0d9]">
               {stats.info} info
               </span>
             {stats.warn > 0 && (
@@ -225,10 +244,10 @@ export function LogsView() {
               type="button"
               onClick={() => setAutoRefresh(!autoRefresh)}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors",
+                "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 autoRefresh
                   ? "border-emerald-200 bg-emerald-100 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300"
-                  : "border-stone-200 bg-white text-stone-600 hover:bg-stone-100 hover:text-stone-900 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-stone-700 dark:hover:text-stone-100"
+                  : "border-stone-200 bg-white text-stone-600 hover:bg-stone-100 hover:text-stone-900 dark:border-[#2c343d] dark:bg-[#171a1d] dark:text-[#c7d0d9] dark:hover:bg-[#1e2227] dark:hover:text-[#f5f7fa]"
               )}
             >
               {autoRefresh ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
@@ -237,7 +256,7 @@ export function LogsView() {
             <button
               type="button"
               onClick={fetchLogs}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-stone-700 dark:hover:text-stone-100"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-[#2c343d] dark:bg-[#171a1d] dark:text-[#c7d0d9] dark:hover:bg-[#1e2227] dark:hover:text-[#f5f7fa]"
               title="Refresh now"
             >
               {loading ? (
@@ -255,10 +274,10 @@ export function LogsView() {
               type="button"
               onClick={() => setShowFilters(!showFilters)}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors",
+                "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 showFilters || hasFilters
                   ? "border-stone-900 bg-stone-900 text-white dark:border-stone-200 dark:bg-stone-100 dark:text-stone-900"
-                  : "border-stone-200 bg-white text-stone-600 hover:bg-stone-100 hover:text-stone-900 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-stone-700 dark:hover:text-stone-100"
+                  : "border-stone-200 bg-white text-stone-600 hover:bg-stone-100 hover:text-stone-900 dark:border-[#2c343d] dark:bg-[#171a1d] dark:text-[#c7d0d9] dark:hover:bg-[#1e2227] dark:hover:text-[#f5f7fa]"
               )}
             >
               <Filter className="h-3.5 w-3.5" />
@@ -274,13 +293,23 @@ export function LogsView() {
                 </span>
               )}
             </button>
+            <button
+              type="button"
+              onClick={downloadLogs}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-[#2c343d] dark:bg-[#171a1d] dark:text-[#c7d0d9] dark:hover:bg-[#1e2227] dark:hover:text-[#f5f7fa]"
+              title="Download logs as JSON"
+              aria-label="Download logs as JSON"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Export
+            </button>
           </div>
         }
       />
 
       <SectionBody width="wide" padding="regular" innerClassName="space-y-4">
         {showFilters && (
-          <div className="rounded-xl border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-800">
+          <div className="rounded-xl border border-stone-200 bg-white p-4 dark:border-[#2c343d] dark:bg-[#171a1d]">
             <div className="mb-3 flex items-center justify-between gap-2">
               <div>
                 <p className="text-sm font-semibold text-stone-900 dark:text-stone-100">Filters</p>
@@ -290,7 +319,7 @@ export function LogsView() {
                 <button
                   type="button"
                   onClick={clearFilters}
-                  className="text-xs font-medium text-stone-500 hover:text-stone-900 dark:text-stone-400 dark:hover:text-stone-100"
+                  className="text-xs font-medium text-stone-500 hover:text-stone-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-stone-400 dark:hover:text-[#f5f7fa]"
                 >
                   Clear all
                 </button>
@@ -298,8 +327,8 @@ export function LogsView() {
             </div>
             <div className="flex flex-wrap items-center gap-2">
             {/* Search */}
-            <div className="flex items-center gap-1.5 rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-2 dark:border-stone-700 dark:bg-stone-900/70">
-              <Search className="h-3.5 w-3.5 text-stone-400 dark:text-stone-500" />
+            <div className="flex items-center gap-1.5 rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-2 dark:border-[#2c343d] dark:bg-stone-900/70">
+              <Search className="h-3.5 w-3.5 text-stone-400 dark:text-[#8d98a5]" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -310,7 +339,7 @@ export function LogsView() {
                 <button
                   type="button"
                   onClick={() => setSearch("")}
-                  className="text-stone-400 hover:text-stone-700 dark:text-stone-500 dark:hover:text-stone-200"
+                  className="text-stone-400 hover:text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-[#8d98a5] dark:hover:text-stone-200"
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -321,7 +350,7 @@ export function LogsView() {
             <select
               value={sourceFilter}
               onChange={(e) => setSourceFilter(e.target.value)}
-              className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700 outline-none dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
+              className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700 outline-none dark:border-[#2c343d] dark:bg-[#171a1d] dark:text-stone-200"
             >
               <option value="">All sources</option>
               {sources.map((s) => (
@@ -341,15 +370,14 @@ export function LogsView() {
                     setLevelFilter(levelFilter === level ? "" : level)
                   }
                   className={cn(
-                    "rounded-md border px-2 py-0.5 text-xs font-medium transition-colors",
-                    "rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors",
+                    "rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     levelFilter === level
                       ? level === "error"
                         ? "border-red-200 bg-red-100 text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-300"
                       : level === "warn"
                           ? "border-amber-200 bg-amber-100 text-amber-700 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-300"
                           : "border-sky-200 bg-sky-100 text-sky-700 dark:border-sky-500/25 dark:bg-sky-500/10 dark:text-sky-300"
-                      : "border-stone-200 bg-stone-50 text-stone-500 hover:text-stone-900 dark:border-stone-700 dark:bg-stone-900/70 dark:text-stone-400 dark:hover:text-stone-100"
+                      : "border-stone-200 bg-stone-50 text-stone-500 hover:text-stone-900 dark:border-[#2c343d] dark:bg-stone-900/70 dark:text-stone-400 dark:hover:text-[#f5f7fa]"
                   )}
                 >
                   {level}
@@ -361,7 +389,7 @@ export function LogsView() {
             <select
               value={limit}
               onChange={(e) => setLimit(parseInt(e.target.value, 10))}
-              className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700 outline-none dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
+              className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700 outline-none dark:border-[#2c343d] dark:bg-[#171a1d] dark:text-stone-200"
             >
               <option value="100">100 lines</option>
               <option value="200">200 lines</option>
@@ -372,7 +400,7 @@ export function LogsView() {
           </div>
         )}
 
-        <div className="overflow-hidden rounded-xl border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-800">
+        <div className="overflow-hidden rounded-xl border border-stone-200 bg-white shadow-sm dark:border-[#2c343d] dark:bg-[#171a1d]">
           <div
             ref={scrollRef}
             onScroll={handleScroll}
@@ -381,14 +409,14 @@ export function LogsView() {
         {loading && entries.length === 0 ? (
           <LoadingState label="Loading logs..." className="py-12" />
         ) : displayEntries.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-2 py-12 text-stone-400 dark:text-stone-500">
+          <div className="flex flex-col items-center justify-center gap-2 py-12 text-stone-400 dark:text-[#8d98a5]">
             <Terminal className="h-6 w-6" />
             <span className="text-sm font-medium">No log entries found</span>
             {hasFilters && (
               <button
                 type="button"
                 onClick={clearFilters}
-                className="text-xs font-medium text-emerald-700 hover:text-emerald-600 dark:text-emerald-300 dark:hover:text-emerald-200"
+                className="text-xs font-medium text-emerald-700 hover:text-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-emerald-300 dark:hover:text-emerald-200"
               >
                 Clear filters
               </button>
@@ -412,7 +440,7 @@ export function LogsView() {
                   {showDate && entry.time && (
                     <div className="my-1 flex items-center gap-2 px-2 py-0.5">
                       <div className="h-px flex-1 bg-stone-200 dark:bg-stone-700" />
-                      <span className="text-xs font-medium text-stone-400 dark:text-stone-500">
+                      <span className="text-xs font-medium text-stone-400 dark:text-[#8d98a5]">
                         {formatLogDate(entry.time)}
                       </span>
                       <div className="h-px flex-1 bg-stone-200 dark:bg-stone-700" />
@@ -424,7 +452,7 @@ export function LogsView() {
                         style.rowClass
                       )}
                     >
-                    <span className="w-16 shrink-0 text-stone-400 dark:text-stone-500">
+                    <span className="w-16 shrink-0 text-stone-400 dark:text-[#8d98a5]">
                       {formatLogTime(entry.time, timeFormat)}
                     </span>
                     <LevelIcon
@@ -444,7 +472,7 @@ export function LogsView() {
                         style.messageClass
                       )}
                     >
-                      {highlightMessage(entry.message, search)}
+                      {highlightMessage(entry.message, debouncedSearch)}
                     </span>
                   </div>
                 </div>
@@ -454,7 +482,7 @@ export function LogsView() {
         )}
           </div>
 
-          <div className="flex shrink-0 items-center justify-between border-t border-stone-200 bg-stone-50 px-4 py-2 dark:border-stone-700 dark:bg-stone-800">
+          <div className="flex shrink-0 items-center justify-between border-t border-stone-200 bg-stone-50 px-4 py-2 dark:border-[#2c343d] dark:bg-[#171a1d]">
         <span className="text-xs text-stone-500 dark:text-stone-400">
           {displayEntries.length} entries
           {hasFilters && " (filtered)"}
@@ -470,7 +498,7 @@ export function LogsView() {
                   behavior: "smooth",
                 });
               }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900 dark:border-stone-600 dark:bg-stone-900 dark:text-stone-300 dark:hover:bg-stone-700 dark:hover:text-stone-100"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-stone-600 dark:bg-stone-900 dark:text-[#c7d0d9] dark:hover:bg-[#1e2227] dark:hover:text-[#f5f7fa]"
             >
               <ArrowDown className="h-3 w-3" />
               Scroll to bottom

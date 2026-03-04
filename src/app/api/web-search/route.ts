@@ -3,7 +3,7 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import { homedir } from "os";
 import { runCli, gatewayCall } from "@/lib/openclaw";
-import { getGatewayToken, getGatewayUrl } from "@/lib/paths";
+import { invokeGatewayTool } from "@/lib/gateway-tools";
 
 export const dynamic = "force-dynamic";
 
@@ -17,14 +17,6 @@ type ConfigGet = {
   path?: string;
   hash?: string;
   parsed?: Record<string, unknown>;
-};
-
-type ToolInvokeEnvelope<T> = {
-  ok?: boolean;
-  result?: T;
-  error?: {
-    message?: string;
-  };
 };
 
 type WebSearchToolResult = {
@@ -110,41 +102,16 @@ function parseWebSearchResultText(text: string): WebSearchToolResult["details"] 
 }
 
 async function invokeGatewayWebSearch(query: string) {
-  const gwUrl = await getGatewayUrl();
-  const token = getGatewayToken();
-  const response = await fetch(`${gwUrl}/tools/invoke`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({
-      tool: "web_search",
-      args: { query },
-      action: "json",
-    }),
-    signal: AbortSignal.timeout(60000),
-  });
-
-  const body = (await response.json().catch(() => null)) as
-    | ToolInvokeEnvelope<WebSearchToolResult>
-    | null;
-
-  if (!response.ok) {
-    const detail =
-      body?.error?.message ||
-      (body ? JSON.stringify(body) : response.statusText);
-    throw new Error(`Gateway web_search failed (${response.status}): ${detail}`);
-  }
-
-  if (!body?.ok || !body.result) {
-    throw new Error(body?.error?.message || "Gateway web_search returned no result");
-  }
+  const result = await invokeGatewayTool<WebSearchToolResult>(
+    "web_search",
+    { query },
+    60000,
+  );
 
   const details =
-    body.result.details ||
+    result.details ||
     parseWebSearchResultText(
-      body.result.content
+      result.content
         ?.map((item) => (item?.type === "text" ? String(item.text || "") : ""))
         .filter(Boolean)
         .join("\n") || "",

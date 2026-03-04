@@ -481,16 +481,7 @@ async function writeDefaultsAllowedModels(
   currentRaw: unknown
 ): Promise<void> {
   const patchValue = buildAllowedModelsPatchValue(expectedModels, currentRaw);
-  await runCli(
-    [
-      "config",
-      "set",
-      "--strict-json",
-      "agents.defaults.models",
-      JSON.stringify(patchValue),
-    ],
-    15000
-  );
+  await patchConfig({ agents: { defaults: { models: patchValue } } });
 }
 
 // gatewayCallWithRetry, applyConfigPatchWithRetry, isGatewayTransientError

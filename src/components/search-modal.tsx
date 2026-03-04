@@ -9,6 +9,7 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 import { Search, Brain } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useFocusTrap, useBodyScrollLock } from "@/hooks/use-modal-accessibility";
 
 /* ── types ────────────────────────────────────────── */
 
@@ -67,16 +68,16 @@ export function SearchModal({ open, onClose }: Props) {
   const [selectedIdx, setSelectedIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const focusTrapRef = useFocusTrap(open);
+  useBodyScrollLock(open);
 
-  // Focus input when modal opens
+  // Reset state when modal opens (focus is handled by useFocusTrap)
   useEffect(() => {
     if (open) {
       setQuery("");
       setResults([]);
       setSearched(false);
       setSelectedIdx(0);
-      // Small delay to let the modal render
-      setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [open]);
 
@@ -152,7 +153,13 @@ export function SearchModal({ open, onClose }: Props) {
       />
 
       {/* Modal */}
-      <div className="fixed inset-x-0 top-24 z-50 w-full max-w-2xl px-4 sm:left-1/2 sm:-translate-x-1/2 sm:px-0">
+      <div
+        ref={focusTrapRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Memory search"
+        className="fixed inset-x-0 top-24 z-50 w-full max-w-2xl px-4 sm:left-1/2 sm:-translate-x-1/2 sm:px-0"
+      >
         <div className="overflow-hidden rounded-2xl border border-foreground/10 bg-card shadow-2xl shadow-black/50">
           {/* Search input */}
           <div className="flex min-w-0 items-center gap-3 border-b border-foreground/10 px-4 py-3 sm:px-6">

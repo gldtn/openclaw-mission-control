@@ -29,7 +29,6 @@ export function useSmartPoll(
   const sseRef = useRef(sseActive);
   sseRef.current = sseActive;
   const inFlight = useRef(false);
-  const mountedRef = useRef(false);
 
   const tick = useCallback(async () => {
     if (inFlight.current) return;
@@ -46,7 +45,6 @@ export function useSmartPoll(
   // Fire immediately on mount only (not on intervalMs changes)
   useEffect(() => {
     if (immediate) void tick();
-    mountedRef.current = true;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

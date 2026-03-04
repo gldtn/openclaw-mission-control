@@ -48,6 +48,11 @@ const TYPE_ROUTE: Record<string, string> = {
   system: "/activity",
 };
 
+const TYPE_QUERY_PARAM: Record<string, string> = {
+  cron: "job",
+  session: "id",
+};
+
 export function NotificationCenter() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -57,7 +62,21 @@ export function NotificationCenter() {
     const stored = localStorage.getItem("notif_last_seen");
     return stored ? Number(stored) : 0;
   });
+  const [readIds, setReadIds] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const stored = localStorage.getItem("notif_read_ids");
+      return stored ? new Set(JSON.parse(stored) as string[]) : new Set();
+    } catch { return new Set(); }
+  });
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // Persist readIds to localStorage whenever it changes
+  useEffect(() => {
+    try {
+      localStorage.setItem("notif_read_ids", JSON.stringify([...readIds]));
+    } catch { /* ignore */ }
+  }, [readIds]);
 
   const fetchNotifications = useCallback(async () => {
     try {
@@ -101,13 +120,15 @@ export function NotificationCenter() {
     return () => window.removeEventListener("keydown", handler);
   }, [open]);
 
-  const unreadCount = events.filter((e) => e.timestamp > lastSeenTs).length;
+  const unreadCount = events.filter((e) => e.timestamp > lastSeenTs && !readIds.has(e.id)).length;
 
   const markAllRead = useCallback(() => {
     const now = Date.now();
     setLastSeenTs(now);
+    setReadIds(new Set());
     try {
       localStorage.setItem("notif_last_seen", String(now));
+      localStorage.removeItem("notif_read_ids");
     } catch { /* ignore */ }
   }, []);
 
@@ -116,7 +137,17 @@ export function NotificationCenter() {
   };
 
   const handleItemClick = (event: NotificationEvent) => {
-    const route = TYPE_ROUTE[event.type] || "/activity";
+    const base = TYPE_ROUTE[event.type] || "/activity";
+    const paramKey = TYPE_QUERY_PARAM[event.type];
+    const route = paramKey && event.source
+      ? `${base}?${paramKey}=${encodeURIComponent(event.source)}`
+      : base;
+    // Mark this notification as read
+    setReadIds((prev) => {
+      const next = new Set(prev);
+      next.add(event.id);
+      return next;
+    });
     setOpen(false);
     router.push(route);
   };
@@ -175,7 +206,7 @@ export function NotificationCenter() {
               </div>
             ) : (
               events.map((event) => {
-                const isUnread = event.timestamp > lastSeenTs;
+                const isUnread = event.timestamp > lastSeenTs && !readIds.has(event.id);
                 const Icon = STATUS_ICON[event.status || "info"] || Info;
                 return (
                   <button
