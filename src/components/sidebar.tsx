@@ -9,7 +9,7 @@ import {
   LayoutDashboard,
   ListChecks,
   Clock,
-  CalendarDays,
+  Calendar,
   MessageSquare,
   Radio,
   Brain,
@@ -57,44 +57,44 @@ type NavItem = {
 const isAgentbayHosting = process.env.NEXT_PUBLIC_AGENTBAY_HOSTED === "true";
 
 const navItems: NavItem[] = [
-  // ── Core ──
-  { group: "Core", section: "dashboard", label: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
+  // ── Overview ──
+  { group: "Overview", section: "dashboard", label: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
+  { section: "activity", label: "Activity", icon: Activity, href: "/activity" },
+  { section: "usage", label: "Usage", icon: BarChart3, href: "/usage" },
+  // ── Agents ──
+  { group: "Agents", section: "agents", label: "Agents", icon: Users, href: "/agents" },
+  { section: "agents", label: "Subagents", icon: Users2, href: "/agents?tab=subagents", tab: "subagents", isSubItem: true },
   { section: "chat", label: "Chat", icon: MessageCircle, href: "/chat" },
   { section: "channels", label: "Channels", icon: Radio, href: "/channels" },
-  { section: "agents", label: "Agents", icon: Users, href: "/agents" },
-  { section: "agents", label: "Subagents", icon: Users2, href: "/agents?tab=subagents", tab: "subagents", isSubItem: true },
-  // ── Work ──
-  { group: "Work", section: "calendar", label: "Calendar", icon: CalendarDays, href: "/calendar" },
-  { section: "calendar", label: "Providers", icon: Settings2, href: "/calendar/providers", tab: "providers", isSubItem: true },
-  { section: "tasks", label: "Tasks", icon: ListChecks, href: "/tasks" },
   { section: "sessions", label: "Sessions", icon: MessageSquare, href: "/sessions" },
+  // ── Work ──
+  { group: "Work", section: "tasks", label: "Tasks", icon: ListChecks, href: "/tasks" },
+  { section: "calendar", label: "Calendar", icon: Calendar, href: "/calendar" },
+  { section: "calendar", label: "Providers", icon: Settings2, href: "/calendar/providers", tab: "providers", isSubItem: true },
   { section: "cron", label: "Cron Jobs", icon: Clock, href: "/cron" },
   { section: "cron", label: "Heartbeat", icon: Heart, href: "/heartbeat", tab: "heartbeat", isSubItem: true },
+  { section: "skills", label: "Skills", icon: Wrench, href: "/skills" },
+  { section: "skills", label: "ClawHub", icon: Package, href: "/skills?tab=clawhub", tab: "clawhub", isSubItem: true },
   // ── Knowledge ──
   { group: "Knowledge", section: "memory", label: "Memory", icon: Brain, href: "/memory" },
   { section: "docs", label: "Documents", icon: FolderOpen, href: "/documents" },
   { section: "vectors", label: "Vector DB", icon: Database, href: "/vectors" },
-  // ── Integrations ──
-  { group: "Integrations", section: "skills", label: "Skills", icon: Wrench, href: "/skills" },
-  { section: "skills", label: "ClawHub", icon: Package, href: "/skills?tab=clawhub", tab: "clawhub", isSubItem: true },
-  { section: "audio", label: "Audio & Voice", icon: Volume2, href: "/audio" },
-  ...(!isAgentbayHosting ? [{ section: "browser", label: "Browser Relay", icon: Globe, href: "/browser" } as NavItem] : []),
-  { section: "search", label: "Web Search", icon: Search, href: "/search" },
-  // ── Configuration ──
-  { group: "Configuration", section: "models", label: "Models", icon: Cpu, href: "/models" },
-  { section: "accounts", label: "Keys & Access", icon: KeyRound, href: "/accounts" },
+  // ── Configure ──
+  { group: "Configure", section: "models", label: "Models", icon: Cpu, href: "/models" },
+  { section: "accounts", label: "API Keys", icon: KeyRound, href: "/accounts" },
   { section: "security", label: "Security", icon: ShieldCheck, href: "/security" },
   { section: "hooks", label: "Hooks", icon: Webhook, href: "/hooks" },
-  ...(!isAgentbayHosting ? [{ section: "tailscale", label: "Tailscale", icon: Waypoints, href: "/tailscale" } as NavItem] : []),
-  { section: "settings", label: "Settings", icon: Settings2, href: "/settings" },
-  { section: "config", label: "Config", icon: Settings, href: "/config" },
-  ...(isAgentbayHosting ? [{ section: "help" as const, label: "Help & support", icon: HelpCircle, href: "/help" } as NavItem] : []),
-  // ── Monitoring ──
-  { group: "Monitoring", section: "activity", label: "Activity", icon: Activity, href: "/activity" },
-  { section: "doctor", label: "Doctor", icon: Stethoscope, href: "/doctor" },
-  { section: "usage", label: "Usage", icon: BarChart3, href: "/usage" },
+  { section: "settings", label: "Preferences", icon: Settings2, href: "/settings" },
+  // ── System ──
+  { group: "System", section: "doctor", label: "Doctor", icon: Stethoscope, href: "/doctor" },
   { section: "terminal", label: "Terminal", icon: SquareTerminal, href: "/terminal" },
   { section: "logs", label: "Logs", icon: Terminal, href: "/logs" },
+  { section: "browser", label: "Browser Relay", icon: Globe, href: "/browser" },
+  { section: "audio", label: "Audio & Voice", icon: Volume2, href: "/audio" },
+  { section: "search", label: "Web Search", icon: Search, href: "/search" },
+  ...(!isAgentbayHosting ? [{ section: "tailscale", label: "Tailscale", icon: Waypoints, href: "/tailscale" } as NavItem] : []),
+  { section: "config", label: "Config", icon: Settings, href: "/config" },
+  ...(isAgentbayHosting ? [{ section: "help" as const, label: "Help & Support", icon: HelpCircle, href: "/help" } as NavItem] : []),
 ];
 
 const SIDEBAR_COLLAPSED_KEY = "sidebar_collapsed";

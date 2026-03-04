@@ -160,6 +160,25 @@ function toDateInputValue(iso?: string): string {
   return `${y}-${m}-${da}`;
 }
 
+function parseLocalDateTime(value: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(String(value || "").trim());
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), 0, 0);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function toAllDayLocal(value: string): string {
+  const dt = parseLocalDateTime(value);
+  if (!dt) return "";
+  return `${String(dt.getFullYear()).padStart(4, "0")}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}T00:00`;
+}
+
+function isMidnightLocal(iso: string): boolean {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return false;
+  return d.getHours() === 0 && d.getMinutes() === 0;
+}
+
 function startOfMonthGrid(viewMonth: Date): Date {
   const first = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1);
   const day = first.getDay();
@@ -187,7 +206,7 @@ function badgeForType(type: CalendarItem["type"]): { label: string; className: s
   if (type === "event") {
     return {
       label: "Event",
-      className: "border-blue-500/30 bg-blue-500/15 text-blue-200",
+      className: "border-sky-500/35 bg-sky-500/15 text-sky-700 dark:text-sky-200",
       Icon: CalendarClock,
     };
   }
@@ -235,6 +254,7 @@ export function CalendarView() {
   const [createNotes, setCreateNotes] = useState("");
   const [createDueAt, setCreateDueAt] = useState("");
   const [createEndAt, setCreateEndAt] = useState("");
+  const [createAllDay, setCreateAllDay] = useState(false);
   const [createKind, setCreateKind] = useState<"reminder" | "event">("reminder");
   const [createSaveToProvider, setCreateSaveToProvider] = useState(false);
   const [createProviderId, setCreateProviderId] = useState("");
@@ -248,6 +268,7 @@ export function CalendarView() {
   const [editNotes, setEditNotes] = useState("");
   const [editDueAt, setEditDueAt] = useState("");
   const [editEndAt, setEditEndAt] = useState("");
+  const [editAllDay, setEditAllDay] = useState(false);
   const [editKind, setEditKind] = useState<"reminder" | "event">("reminder");
   const [savingEdit, setSavingEdit] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
@@ -322,6 +343,7 @@ export function CalendarView() {
     setCreateNotes("");
     setCreateDueAt("");
     setCreateEndAt("");
+    setCreateAllDay(false);
     setCreateKind("reminder");
     setCreateSaveToProvider(false);
     setCreateProviderId("");
@@ -449,6 +471,24 @@ export function CalendarView() {
 
   const createItem = useCallback(async () => {
     if (!createTitle.trim() || !createDueAt.trim()) return;
+    if (createKind === "event" && !createEndAt.trim()) {
+      setCreateError("End date/time is required for events.");
+      return;
+    }
+    const normalizedStart = createAllDay ? toAllDayLocal(createDueAt) : createDueAt;
+    const normalizedEnd = createAllDay ? toAllDayLocal(createEndAt) : createEndAt;
+    if (createKind === "event") {
+      const start = parseLocalDateTime(normalizedStart);
+      const end = parseLocalDateTime(normalizedEnd);
+      if (!start || !end) {
+        setCreateError("Start and end date/time are required for events.");
+        return;
+      }
+      if (end.getTime() < start.getTime()) {
+        setCreateError("End date/time cannot be before start date/time.");
+        return;
+      }
+    }
     if (createSaveToProvider && !createProviderId) {
       setCreateError("Select a provider account before creating.");
       return;
@@ -471,8 +511,8 @@ export function CalendarView() {
           kind: createKind,
           title: createTitle.trim(),
           notes: createNotes.trim() || undefined,
-          dueAt: createDueAt,
-          endAt: createKind === "event" && createEndAt.trim() ? createEndAt : undefined,
+          dueAt: normalizedStart,
+          endAt: createKind === "event" ? normalizedEnd : undefined,
           saveToProvider: createSaveToProvider,
           providerAccountId: createSaveToProvider ? createProviderId : undefined,
         }),
@@ -489,7 +529,7 @@ export function CalendarView() {
     } finally {
       setSaving(false);
     }
-  }, [createDueAt, createEndAt, createKind, createNotes, createProviderId, createSaveToProvider, createTitle, payload?.providers, refresh, resetCreateForm]);
+  }, [createAllDay, createDueAt, createEndAt, createKind, createNotes, createProviderId, createSaveToProvider, createTitle, payload?.providers, refresh, resetCreateForm]);
 
   const patchEntry = useCallback(async (id: string, patch: Record<string, unknown>) => {
     const res = await fetch("/api/calendar", {
@@ -865,6 +905,7 @@ export function CalendarView() {
     setEditNotes(item.notes || "");
     setEditDueAt(toDateTimeLocalValue(item.dueAt));
     setEditEndAt(item.type === "event" ? toDateTimeLocalValue(item.endAt || "") : "");
+    setEditAllDay(item.type === "event" && isMidnightLocal(item.dueAt) && (!!item.endAt && isMidnightLocal(item.endAt)));
     setEditKind(item.type);
   }, []);
 
@@ -876,6 +917,7 @@ export function CalendarView() {
     setEditNotes("");
     setEditDueAt("");
     setEditEndAt("");
+    setEditAllDay(false);
     setEditKind("reminder");
   }, [savingEdit]);
 
@@ -883,14 +925,32 @@ export function CalendarView() {
     if (!editItemId) return;
     const trimmed = editTitle.trim();
     if (!trimmed || !editDueAt.trim()) return;
+    if (editKind === "event" && !editEndAt.trim()) {
+      setCalendarError("End date/time is required for events.");
+      return;
+    }
+    const normalizedStart = editAllDay ? toAllDayLocal(editDueAt) : editDueAt;
+    const normalizedEnd = editKind === "event" ? (editAllDay ? toAllDayLocal(editEndAt) : editEndAt) : "";
+    if (editKind === "event") {
+      const start = parseLocalDateTime(normalizedStart);
+      const end = parseLocalDateTime(normalizedEnd);
+      if (!start || !end) {
+        setCalendarError("Start and end date/time are required for events.");
+        return;
+      }
+      if (end.getTime() < start.getTime()) {
+        setCalendarError("End date/time cannot be before start date/time.");
+        return;
+      }
+    }
     setSavingEdit(true);
     setCalendarError(null);
     try {
       await patchEntry(editItemId, {
         title: trimmed,
         notes: editNotes.trim() || undefined,
-        dueAt: editDueAt,
-        endAt: editKind === "event" && editEndAt.trim() ? editEndAt : "",
+        dueAt: normalizedStart,
+        endAt: editKind === "event" ? normalizedEnd : "",
         kind: editKind,
       });
       closeEditModal();
@@ -899,7 +959,7 @@ export function CalendarView() {
     } finally {
       setSavingEdit(false);
     }
-  }, [closeEditModal, editDueAt, editEndAt, editItemId, editKind, editNotes, editTitle, patchEntry]);
+  }, [closeEditModal, editAllDay, editDueAt, editEndAt, editItemId, editKind, editNotes, editTitle, patchEntry]);
 
   const itemScopedKey = useCallback((scope: "month" | "week" | "upcoming", id: string) => {
     return `${scope}:${id}`;
@@ -1832,52 +1892,172 @@ export function CalendarView() {
                 />
               </label>
 
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="block text-xs text-muted-foreground">
+                  <p>Type</p>
+                  <div className="mt-1 inline-flex items-center rounded-md border border-foreground/10 bg-background/70 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCreateKind("event");
+                        if (!createEndAt && createDueAt) setCreateEndAt(createDueAt);
+                      }}
+                      className={cn(
+                        "rounded px-2 py-1 text-xs transition-colors",
+                        createKind === "event" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      Event
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCreateKind("reminder");
+                        setCreateEndAt("");
+                        setCreateAllDay(false);
+                      }}
+                      className={cn(
+                        "rounded px-2 py-1 text-xs transition-colors",
+                        createKind === "reminder" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      Reminder
+                    </button>
+                  </div>
+                </div>
+
+                <div className="block text-xs text-muted-foreground">
+                  <p>All day event</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (createKind !== "event") return;
+                      const next = !createAllDay;
+                      setCreateAllDay(next);
+                      if (next) {
+                        if (createDueAt) {
+                          const normalizedStart = toAllDayLocal(createDueAt);
+                          setCreateDueAt(normalizedStart);
+                          setCreateEndAt((prev) => {
+                            const normalizedPrev = toAllDayLocal(prev);
+                            if (!normalizedPrev) return normalizedStart;
+                            const s = parseLocalDateTime(normalizedStart);
+                            const p = parseLocalDateTime(normalizedPrev);
+                            if (!s || !p || p.getTime() < s.getTime()) return normalizedStart;
+                            return normalizedPrev;
+                          });
+                        } else {
+                          setCreateEndAt("");
+                        }
+                      }
+                    }}
+                    disabled={createKind !== "event"}
+                    className={cn(
+                      "mt-1 inline-flex rounded-md border p-0.5 text-xs transition-colors",
+                      createKind !== "event"
+                        ? "cursor-not-allowed border-foreground/10 bg-background/40 text-muted-foreground/50"
+                        : "border-foreground/10 bg-background/70"
+                    )}
+                    aria-pressed={createAllDay}
+                  >
+                    <span
+                      className={cn(
+                        "rounded px-2 py-1",
+                        createAllDay ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"
+                      )}
+                    >
+                      On
+                    </span>
+                    <span
+                      className={cn(
+                        "rounded px-2 py-1",
+                        !createAllDay ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"
+                      )}
+                    >
+                      Off
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <div className={cn("grid gap-3", createKind === "event" ? "sm:grid-cols-2" : "sm:grid-cols-1")}>
                 <div className="block text-xs text-muted-foreground">
                   <p>Start</p>
                   <DateTimePicker
                     value={createDueAt}
-                    onChange={setCreateDueAt}
-                    className="mt-1 w-full"
-                  />
-                </div>
-                <div className="block text-xs text-muted-foreground">
-                  <p>Type</p>
-                  <ThemedSelect
-                    value={createKind}
-                    onChange={(value) => {
-                      const next = value === "event" ? "event" : "reminder";
-                      setCreateKind(next);
-                      if (next !== "event") setCreateEndAt("");
+                    onChange={(next) => {
+                      setCreateDueAt(next);
+                      if (createKind === "event" && createAllDay) {
+                        const normalizedStart = toAllDayLocal(next);
+                        setCreateEndAt((prev) => {
+                          const normalizedPrev = toAllDayLocal(prev);
+                          if (!normalizedPrev) return normalizedStart;
+                          const s = parseLocalDateTime(normalizedStart);
+                          const p = parseLocalDateTime(normalizedPrev);
+                          if (!s || !p || p.getTime() < s.getTime()) return normalizedStart;
+                          return normalizedPrev;
+                        });
+                      }
                     }}
-                    options={[{ value: "reminder", label: "Reminder" }, { value: "event", label: "Event" }]}
+                    dateOnly={createAllDay}
                     className="mt-1 w-full"
                   />
                 </div>
-              </div>
 
               {createKind === "event" && (
                 <div className="block text-xs text-muted-foreground">
-                  <p>End (optional)</p>
+                  <p>End</p>
                   <DateTimePicker
                     value={createEndAt}
                     onChange={setCreateEndAt}
+                    dateOnly={createAllDay}
+                    minValue={createDueAt}
                     className="mt-1 w-full"
                   />
                 </div>
               )}
+              </div>
 
-              <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={createSaveToProvider}
-                  onChange={(e) => {
-                    setCreateSaveToProvider(e.target.checked);
-                    if (!e.target.checked) setCreateProviderId("");
-                  }}
-                />
-                Save to provider
-              </label>
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="block text-xs text-muted-foreground">
+                  <p>Save to provider</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCreateSaveToProvider((prev) => {
+                        const next = !prev;
+                        if (!next) setCreateProviderId("");
+                        return next;
+                      });
+                    }}
+                    className="mt-1 inline-flex rounded-md border border-foreground/10 bg-background/70 p-0.5 text-xs"
+                    aria-pressed={createSaveToProvider}
+                  >
+                    <span
+                      className={cn(
+                        "rounded px-2 py-1",
+                        createSaveToProvider ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"
+                      )}
+                    >
+                      On
+                    </span>
+                    <span
+                      className={cn(
+                        "rounded px-2 py-1",
+                        !createSaveToProvider ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"
+                      )}
+                    >
+                      Off
+                    </span>
+                  </button>
+                </div>
+                <a
+                  href="/calendar/providers"
+                  className="text-xs text-emerald-300 hover:text-emerald-200"
+                >
+                  Configure providers
+                </a>
+              </div>
 
               {createSaveToProvider && (
                 <div className="block text-xs text-muted-foreground">
@@ -1918,7 +2098,7 @@ export function CalendarView() {
               <button
                 type="button"
                 onClick={() => void createItem()}
-                disabled={saving || !createTitle.trim() || !createDueAt.trim()}
+                disabled={saving || !createTitle.trim() || !createDueAt.trim() || (createKind === "event" && !createEndAt.trim())}
                 className="rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-xs font-medium text-sky-300 disabled:opacity-60"
               >
                 {saving ? "Creating..." : "Create"}
@@ -2035,40 +2215,131 @@ export function CalendarView() {
                 />
               </label>
 
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="block text-xs text-muted-foreground">
+                  <p>Type</p>
+                  <div className="mt-1 inline-flex items-center rounded-md border border-foreground/10 bg-background/70 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditKind("event");
+                        if (!editEndAt && editDueAt) setEditEndAt(editDueAt);
+                      }}
+                      className={cn(
+                        "rounded px-2 py-1 text-xs transition-colors",
+                        editKind === "event" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      Event
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditKind("reminder");
+                        setEditEndAt("");
+                        setEditAllDay(false);
+                      }}
+                      className={cn(
+                        "rounded px-2 py-1 text-xs transition-colors",
+                        editKind === "reminder" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      Reminder
+                    </button>
+                  </div>
+                </div>
+
+                <div className="block text-xs text-muted-foreground">
+                  <p>All day event</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (editKind !== "event") return;
+                      const next = !editAllDay;
+                      setEditAllDay(next);
+                      if (next) {
+                        if (editDueAt) {
+                          const normalizedStart = toAllDayLocal(editDueAt);
+                          setEditDueAt(normalizedStart);
+                          setEditEndAt((prev) => {
+                            const normalizedPrev = toAllDayLocal(prev);
+                            if (!normalizedPrev) return normalizedStart;
+                            const s = parseLocalDateTime(normalizedStart);
+                            const p = parseLocalDateTime(normalizedPrev);
+                            if (!s || !p || p.getTime() < s.getTime()) return normalizedStart;
+                            return normalizedPrev;
+                          });
+                        } else {
+                          setEditEndAt("");
+                        }
+                      }
+                    }}
+                    disabled={editKind !== "event"}
+                    className={cn(
+                      "mt-1 inline-flex rounded-md border p-0.5 text-xs transition-colors",
+                      editKind !== "event"
+                        ? "cursor-not-allowed border-foreground/10 bg-background/40 text-muted-foreground/50"
+                        : "border-foreground/10 bg-background/70"
+                    )}
+                    aria-pressed={editAllDay}
+                  >
+                    <span
+                      className={cn(
+                        "rounded px-2 py-1",
+                        editAllDay ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"
+                      )}
+                    >
+                      On
+                    </span>
+                    <span
+                      className={cn(
+                        "rounded px-2 py-1",
+                        !editAllDay ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"
+                      )}
+                    >
+                      Off
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <div className={cn("grid gap-3", editKind === "event" ? "sm:grid-cols-2" : "sm:grid-cols-1")}>
                 <div className="block text-xs text-muted-foreground">
                   <p>Start</p>
                   <DateTimePicker
                     value={editDueAt}
-                    onChange={setEditDueAt}
-                    className="mt-1 w-full"
-                  />
-                </div>
-                <div className="block text-xs text-muted-foreground">
-                  <p>Type</p>
-                  <ThemedSelect
-                    value={editKind}
-                    onChange={(value) => {
-                      const next = value === "event" ? "event" : "reminder";
-                      setEditKind(next);
-                      if (next !== "event") setEditEndAt("");
+                    onChange={(next) => {
+                      setEditDueAt(next);
+                      if (editKind === "event" && editAllDay) {
+                        const normalizedStart = toAllDayLocal(next);
+                        setEditEndAt((prev) => {
+                          const normalizedPrev = toAllDayLocal(prev);
+                          if (!normalizedPrev) return normalizedStart;
+                          const s = parseLocalDateTime(normalizedStart);
+                          const p = parseLocalDateTime(normalizedPrev);
+                          if (!s || !p || p.getTime() < s.getTime()) return normalizedStart;
+                          return normalizedPrev;
+                        });
+                      }
                     }}
-                    options={[{ value: "reminder", label: "Reminder" }, { value: "event", label: "Event" }]}
+                    dateOnly={editAllDay}
                     className="mt-1 w-full"
                   />
                 </div>
-              </div>
 
-              {editKind === "event" && (
-                <div className="block text-xs text-muted-foreground">
-                  <p>End (optional)</p>
-                  <DateTimePicker
-                    value={editEndAt}
-                    onChange={setEditEndAt}
-                    className="mt-1 w-full"
-                  />
-                </div>
-              )}
+                {editKind === "event" && (
+                  <div className="block text-xs text-muted-foreground">
+                    <p>End</p>
+                    <DateTimePicker
+                      value={editEndAt}
+                      onChange={setEditEndAt}
+                      dateOnly={editAllDay}
+                      minValue={editDueAt}
+                      className="mt-1 w-full"
+                    />
+                  </div>
+                )}
+              </div>
 
               {calendarError && (
                 <p className="rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1 text-xs text-red-400">
@@ -2088,7 +2359,7 @@ export function CalendarView() {
               <button
                 type="button"
                 onClick={() => void submitEditModal()}
-                disabled={savingEdit || !editTitle.trim() || !editDueAt.trim()}
+                disabled={savingEdit || !editTitle.trim() || !editDueAt.trim() || (editKind === "event" && !editEndAt.trim())}
                 className="rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 text-xs font-medium text-sky-300 disabled:opacity-60"
               >
                 {savingEdit ? "Saving..." : "Save changes"}

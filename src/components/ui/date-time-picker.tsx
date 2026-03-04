@@ -10,6 +10,8 @@ type DateTimePickerProps = {
   onChange: (value: string) => void;
   className?: string;
   placeholder?: string;
+  dateOnly?: boolean;
+  minValue?: string;
 };
 
 function parseLocalValue(value: string): Date | null {
@@ -43,6 +45,8 @@ export function DateTimePicker({
   onChange,
   className,
   placeholder = "Pick date & time",
+  dateOnly = false,
+  minValue,
 }: DateTimePickerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const parsed = useMemo(() => parseLocalValue(value), [value]);
@@ -78,6 +82,10 @@ export function DateTimePicker({
   }, [viewMonth]);
 
   const selected = parsed || base;
+  const minParsed = useMemo(() => parseLocalValue(minValue || ""), [minValue]);
+  const minDayStart = minParsed
+    ? new Date(minParsed.getFullYear(), minParsed.getMonth(), minParsed.getDate()).getTime()
+    : null;
   const selectedDay = new Date(selected.getFullYear(), selected.getMonth(), selected.getDate()).getTime();
   const hour24 = selected.getHours();
   const period: "AM" | "PM" = hour24 >= 12 ? "PM" : "AM";
@@ -89,14 +97,18 @@ export function DateTimePicker({
         day.getFullYear(),
         day.getMonth(),
         day.getDate(),
-        selected.getHours(),
-        selected.getMinutes(),
+        dateOnly ? 0 : selected.getHours(),
+        dateOnly ? 0 : selected.getMinutes(),
         0,
         0
       );
+      if (minDayStart != null) {
+        const nextDayStart = new Date(next.getFullYear(), next.getMonth(), next.getDate()).getTime();
+        if (nextDayStart < minDayStart) return;
+      }
       onChange(toLocalValue(next));
     },
-    [onChange, selected]
+    [dateOnly, minDayStart, onChange, selected]
   );
 
   const setHour12 = useCallback(
@@ -141,8 +153,7 @@ export function DateTimePicker({
         month: "short",
         day: "numeric",
         year: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
+        ...(dateOnly ? {} : { hour: "numeric", minute: "2-digit" }),
       })
     : "";
 
@@ -187,17 +198,20 @@ export function DateTimePicker({
               const inMonth = day.getMonth() === viewMonth.getMonth();
               const dayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
               const isSelected = dayStart === selectedDay;
+              const isDisabled = minDayStart != null && dayStart < minDayStart;
               return (
                 <button
                   key={`${day.getFullYear()}-${day.getMonth()}-${day.getDate()}`}
                   type="button"
+                  disabled={isDisabled}
                   onClick={() => setDay(day)}
                   className={cn(
                     "h-8 rounded-md text-xs transition-colors",
                     isSelected
                       ? "bg-sky-300/20 text-sky-100"
                       : "text-foreground/85 hover:bg-sky-300/15",
-                    !inMonth && "text-muted-foreground/45"
+                    !inMonth && "text-muted-foreground/45",
+                    isDisabled && "cursor-not-allowed opacity-45 hover:bg-transparent"
                   )}
                 >
                   {day.getDate()}
@@ -206,48 +220,53 @@ export function DateTimePicker({
             })}
           </div>
 
-          <div className="mt-3 flex items-center gap-2">
-            <Clock3 className="h-4 w-4 text-muted-foreground" />
-            <ThemedSelect
-              value={String(hour12).padStart(2, "0")}
-              onChange={setHour12}
-              options={Array.from({ length: 12 }, (_, idx) => {
-                const hour = String(idx + 1).padStart(2, "0");
-                return { value: hour, label: hour };
-              })}
-              className="flex-1"
-              size="compact"
-            />
-            <span className="text-xs text-muted-foreground">:</span>
-            <ThemedSelect
-              value={String(selected.getMinutes()).padStart(2, "0")}
-              onChange={setMinute}
-              options={Array.from({ length: 12 }, (_, i) => i * 5).map((m) => {
-                const minute = String(m).padStart(2, "0");
-                return { value: minute, label: minute };
-              })}
-              className="flex-1"
-              size="compact"
-            />
-            <ThemedSelect
-              value={period}
-              onChange={setPeriod}
-              options={[{ value: "AM", label: "AM" }, { value: "PM", label: "PM" }]}
-              className="w-[4.5rem]"
-              size="compact"
-            />
-          </div>
+          {!dateOnly && (
+            <div className="mt-3 flex items-center gap-2">
+              <Clock3 className="h-4 w-4 text-muted-foreground" />
+              <ThemedSelect
+                value={String(hour12).padStart(2, "0")}
+                onChange={setHour12}
+                options={Array.from({ length: 12 }, (_, idx) => {
+                  const hour = String(idx + 1).padStart(2, "0");
+                  return { value: hour, label: hour };
+                })}
+                className="flex-1"
+                size="compact"
+              />
+              <span className="text-xs text-muted-foreground">:</span>
+              <ThemedSelect
+                value={String(selected.getMinutes()).padStart(2, "0")}
+                onChange={setMinute}
+                options={Array.from({ length: 12 }, (_, i) => i * 5).map((m) => {
+                  const minute = String(m).padStart(2, "0");
+                  return { value: minute, label: minute };
+                })}
+                className="flex-1"
+                size="compact"
+              />
+              <ThemedSelect
+                value={period}
+                onChange={setPeriod}
+                options={[{ value: "AM", label: "AM" }, { value: "PM", label: "PM" }]}
+                className="w-[4.5rem]"
+                size="compact"
+              />
+            </div>
+          )}
 
           <div className="mt-3 flex items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                const now = new Date();
-                onChange(toLocalValue(now));
-                setViewMonth(new Date(now.getFullYear(), now.getMonth(), 1));
-              }}
-              className="rounded-md border border-foreground/10 px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-            >
+              <button
+                type="button"
+                onClick={() => {
+                  const now = new Date();
+                  const next = dateOnly
+                    ? new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+                    : now;
+                  onChange(toLocalValue(next));
+                  setViewMonth(new Date(next.getFullYear(), next.getMonth(), 1));
+                }}
+                className="rounded-md border border-foreground/10 px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+              >
               Now
             </button>
             <button
