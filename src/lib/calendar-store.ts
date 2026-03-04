@@ -90,7 +90,7 @@ export async function readCalendarEntries(workspace: string): Promise<CalendarEn
     const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
     return entries
       .filter((e): e is CalendarEntry => Boolean(e && typeof e === "object" && typeof (e as CalendarEntry).id === "string"))
-      .filter((e) => Boolean(resolveDueAt(e.dueAt)));
+      .filter((e) => typeof e.dueAt === "string" && Boolean(resolveDueAt(e.dueAt)));
   } catch {
     return [];
   }

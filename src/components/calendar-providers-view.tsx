@@ -32,6 +32,7 @@ type ApiPayload = {
     connected?: boolean;
     tokenExpiresAt?: string;
     clientId?: string;
+    redirectUri?: string;
   };
 };
 
@@ -128,7 +129,8 @@ export function CalendarProvidersView() {
     selectedCalendarUrls: [],
   });
 
-  const googleCallbackUri = "http://127.0.0.1:3333/api/calendar/google/callback";
+  const googleCallbackUri = payload?.googleOAuth?.redirectUri
+    || ((typeof window !== "undefined" ? window.location.origin : "") + "/api/calendar/google/callback");
 
   const refresh = useCallback(async () => {
     const res = await fetch("/api/calendar", { cache: "no-store" });
@@ -275,7 +277,7 @@ export function CalendarProvidersView() {
     } finally {
       setGoogleClientImporting(false);
     }
-  }, [refresh]);
+  }, [googleCallbackUri, refresh]);
 
   const syncProvider = useCallback(async (id: string) => {
     setSyncingId(id);
@@ -697,8 +699,9 @@ export function CalendarProvidersView() {
                   <span className="text-xs text-muted-foreground">Cut-off date (optional)</span>
                   <div className={cn(vendorTab === "zoho" && "pointer-events-none opacity-60")}>
                     <DateTimePicker
-                      value={form.cutoffDate ? `${form.cutoffDate}T00:00` : ""}
-                      onChange={(value) => setForm((p) => ({ ...p, cutoffDate: value ? value.slice(0, 10) : "" }))}
+                      dateOnly
+                      value={form.cutoffDate || ""}
+                      onChange={(value) => setForm((p) => ({ ...p, cutoffDate: value || "" }))}
                     />
                   </div>
                 </div>

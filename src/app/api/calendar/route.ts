@@ -453,6 +453,7 @@ export async function POST(request: NextRequest) {
       }
       const ok = await deleteCalendarProvider(workspace, accountId);
       if (!ok) return NextResponse.json({ ok: false, error: "Provider account not found" }, { status: 404 });
+      await purgeProviderEvents(workspace, accountId);
       return NextResponse.json({ ok: true });
     }
 

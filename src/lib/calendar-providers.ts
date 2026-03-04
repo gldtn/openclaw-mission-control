@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
-import { mkdir, readFile, unlink, writeFile } from "fs/promises";
+import { chmod, mkdir, readFile, unlink, writeFile } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { getOpenClawHome } from "@/lib/paths";
@@ -72,6 +72,26 @@ function credentialsDir(): string {
   return join(getOpenClawHome(), "credentials");
 }
 
+async function ensureCredentialsDir(): Promise<void> {
+  const dir = credentialsDir();
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  try {
+    await chmod(dir, 0o700);
+  } catch {
+    // ignore platform-specific chmod failures
+  }
+}
+
+async function writeCredentialFile(path: string, payload: string | Buffer): Promise<void> {
+  await ensureCredentialsDir();
+  await writeFile(path, payload, { mode: 0o600 });
+  try {
+    await chmod(path, 0o600);
+  } catch {
+    // ignore platform-specific chmod failures
+  }
+}
+
 function secretPath(): string {
   return join(credentialsDir(), "calendar-provider-secrets.json");
 }
@@ -105,8 +125,7 @@ async function readGoogleOAuthStateStore(): Promise<GoogleOAuthStateStore> {
 }
 
 async function writeGoogleOAuthStateStore(store: GoogleOAuthStateStore): Promise<void> {
-  await mkdir(credentialsDir(), { recursive: true });
-  await writeFile(googleOAuthStatePath(), JSON.stringify(store, null, 2), "utf-8");
+  await writeCredentialFile(googleOAuthStatePath(), JSON.stringify(store, null, 2));
 }
 
 export async function putGoogleOAuthState(ttlSeconds = 600): Promise<string> {
@@ -137,7 +156,7 @@ export async function consumeGoogleOAuthState(state: string): Promise<boolean> {
 }
 
 async function getOrCreateKey(): Promise<Buffer> {
-  await mkdir(credentialsDir(), { recursive: true });
+  await ensureCredentialsDir();
   try {
     const existing = await readFile(keyPath());
     if (existing.length >= 32) return existing.subarray(0, 32);
@@ -145,7 +164,7 @@ async function getOrCreateKey(): Promise<Buffer> {
     // continue
   }
   const key = randomBytes(32);
-  await writeFile(keyPath(), key);
+  await writeCredentialFile(keyPath(), key);
   return key;
 }
 
@@ -179,8 +198,7 @@ async function readSecrets(): Promise<SecretStore> {
 }
 
 async function writeSecrets(store: SecretStore): Promise<void> {
-  await mkdir(credentialsDir(), { recursive: true });
-  await writeFile(secretPath(), JSON.stringify(store, null, 2), "utf-8");
+  await writeCredentialFile(secretPath(), JSON.stringify(store, null, 2));
 }
 
 export async function putCalendarProviderSecret(secret: string): Promise<string> {
@@ -258,8 +276,7 @@ export async function upsertGoogleOAuthClientConfig(payload: {
     redirectUri: payload.redirectUri?.trim() || undefined,
     updatedAt: new Date().toISOString(),
   };
-  await mkdir(credentialsDir(), { recursive: true });
-  await writeFile(googleOAuthClientPath(), JSON.stringify(next, null, 2), "utf-8");
+  await writeCredentialFile(googleOAuthClientPath(), JSON.stringify(next, null, 2));
   return next;
 }
 
@@ -295,8 +312,7 @@ async function readGoogleOAuthTokenStore(): Promise<GoogleOAuthTokenStore | null
 }
 
 async function writeGoogleOAuthTokenStore(store: GoogleOAuthTokenStore): Promise<void> {
-  await mkdir(credentialsDir(), { recursive: true });
-  await writeFile(googleOAuthTokenPath(), JSON.stringify(store, null, 2), "utf-8");
+  await writeCredentialFile(googleOAuthTokenPath(), JSON.stringify(store, null, 2));
 }
 
 export async function getGoogleOAuthStatus(): Promise<{ connected: boolean; expiresAt?: string }> {
@@ -1543,7 +1559,10 @@ export async function syncCalDavProvider(workspace: string, account: CalendarPro
   for (const url of calendarUrls) {
     try {
       const evXml = await fetchCalDavEventsReport(account, credential, url);
-      for (const event of parseCalendarData(evXml, url)) remoteEvents.set(event.uid, event);
+      for (const event of parseCalendarData(evXml, url)) {
+        const remoteKey = event.itemUrl || `${event.calendarUrl}:${event.uid}`;
+        remoteEvents.set(remoteKey, event);
+      }
       successfulCollections += 1;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1559,15 +1578,15 @@ export async function syncCalDavProvider(workspace: string, account: CalendarPro
   const kept: CalendarEntry[] = entries.filter((entry) => entry.providerAccountId !== account.id);
 
   const nowIso = new Date().toISOString();
-  const imported: CalendarEntry[] = Array.from(remoteEvents.values())
-    .filter((event) => {
+  const imported: CalendarEntry[] = Array.from(remoteEvents.entries())
+    .filter(([, event]) => {
       if (!account.cutoffDate) return true;
       const cutoff = new Date(account.cutoffDate).getTime();
       if (Number.isNaN(cutoff)) return true;
       return new Date(event.dueAt).getTime() >= cutoff;
     })
-    .map((event) => ({
-    id: `provider:${account.id}:${event.uid}`,
+    .map(([remoteKey, event]) => ({
+    id: `provider:${account.id}:${createHash("sha256").update(remoteKey).digest("hex").slice(0, 24)}`,
     kind: event.kind,
     title: event.title,
     notes: event.notes,

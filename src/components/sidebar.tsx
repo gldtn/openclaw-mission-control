@@ -455,6 +455,7 @@ export function Sidebar() {
             type="button"
             onClick={() => setMobileOpen(false)}
             className="rounded-lg p-1.5 text-muted-foreground hover:text-foreground"
+            aria-label="Close menu"
           >
             <X className="h-5 w-5" />
           </button>
