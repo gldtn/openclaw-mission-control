@@ -20,6 +20,7 @@ import {
   deleteCalendarProvider,
   deleteCalDavProviderItem,
   createCalDavProviderItem,
+  discoverProviderCollections,
   getGoogleOAuthAccessToken,
   getGoogleOAuthStatus,
   markCalendarProviderStatus,
@@ -305,7 +306,12 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ ok: false, error: "password is required" }, { status: 400 });
       }
       const result = await testOrDiscoverCalDavConnection({ serverUrl, calendarUrl, username, vendor, calendarId }, credential);
-      return NextResponse.json({ ok: true, calendarUrl: result.calendarUrl });
+      return NextResponse.json({
+        ok: true,
+        calendarUrl: result.calendarUrl,
+        discoveredCollections: result.discoveredCollections,
+        selectedCalendarUrls: result.selectedCalendarUrls,
+      });
     }
 
     if (action === "provider-add") {
@@ -336,11 +342,17 @@ export async function POST(request: NextRequest) {
         }
         secretForDiscovery = password || (existing?.secretRef ? (await readCalendarProviderSecret(existing.secretRef)) || "" : "");
       }
+      if (!secretForDiscovery) {
+        return NextResponse.json({ ok: false, error: "Credentials are required to discover calendar URL" }, { status: 400 });
+      }
+      const discovered = await testOrDiscoverCalDavConnection({ serverUrl, calendarUrl, username, vendor, calendarId }, secretForDiscovery);
+      const requestedSelected = Array.isArray(body?.selectedCalendarUrls)
+        ? body.selectedCalendarUrls.map((x: unknown) => String(x || "").trim()).filter(Boolean)
+        : [];
+      const selectedCalendarUrls = requestedSelected.length > 0
+        ? requestedSelected
+        : discovered.selectedCalendarUrls;
       if (!calendarUrl || /^https?:\/\/[^/]+\/?$/i.test(calendarUrl)) {
-        if (!secretForDiscovery) {
-          return NextResponse.json({ ok: false, error: "Credentials are required to discover calendar URL" }, { status: 400 });
-        }
-        const discovered = await testOrDiscoverCalDavConnection({ serverUrl, calendarUrl, username, vendor, calendarId }, secretForDiscovery);
         calendarUrl = discovered.calendarUrl;
       }
       const account = await upsertCalendarProvider(workspace, {
@@ -351,6 +363,8 @@ export async function POST(request: NextRequest) {
         serverUrl,
         calendarUrl,
         calendarId: calendarId || undefined,
+        discoveredCollections: discovered.discoveredCollections,
+        selectedCalendarUrls,
         username,
         cutoffDate: cutoffDate || undefined,
         enabled: body?.enabled !== false,
@@ -392,6 +406,44 @@ export async function POST(request: NextRequest) {
         await markCalendarProviderStatus(workspace, account.id, { lastError: message });
         return NextResponse.json({ ok: false, error: message }, { status: 500 });
       }
+    }
+
+    if (action === "provider-discover") {
+      const accountId = String(body?.accountId || "").trim();
+      if (!accountId) {
+        return NextResponse.json({ ok: false, error: "accountId required" }, { status: 400 });
+      }
+      const providers = await readCalendarProviders(workspace);
+      const account = providers.find((p) => p.id === accountId);
+      if (!account) {
+        return NextResponse.json({ ok: false, error: "Provider account not found" }, { status: 404 });
+      }
+
+      const discovered = await discoverProviderCollections(account);
+      const updated = await upsertCalendarProvider(workspace, {
+        id: account.id,
+        type: account.type,
+        vendor: account.vendor,
+        label: account.label,
+        serverUrl: account.serverUrl,
+        calendarUrl: account.calendarUrl,
+        calendarId: account.calendarId,
+        discoveredCollections: discovered.discoveredCollections,
+        selectedCalendarUrls: discovered.selectedCalendarUrls,
+        username: account.username,
+        cutoffDate: account.cutoffDate,
+        enabled: account.enabled,
+        secretRef: account.secretRef,
+      });
+
+      return NextResponse.json({
+        ok: true,
+        provider: {
+          ...updated,
+          secretRef: updated.secretRef ? `${updated.secretRef.slice(0, 10)}***` : "",
+          hasSecret: Boolean(updated.secretRef),
+        },
+      });
     }
 
     if (action === "provider-delete") {
@@ -561,7 +613,7 @@ export async function PATCH(request: NextRequest) {
         providerAccountId: current.providerAccountId,
         externalId: current.externalId,
         providerItemUrl: remote.itemUrl,
-        providerEtag: remote.etag || current.providerEtag,
+        providerEtag: remote.etag ?? "",
         providerComponent: remote.component,
         providerCalendarUrl: current.providerCalendarUrl,
         readOnly: false,

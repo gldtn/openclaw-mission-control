@@ -15,6 +15,12 @@ export type CalendarProviderAccount = {
   serverUrl: string;
   calendarUrl: string;
   calendarId?: string;
+  discoveredCollections?: Array<{
+    url: string;
+    name?: string;
+    components?: Array<"VEVENT" | "VTODO">;
+  }>;
+  selectedCalendarUrls?: string[];
   username: string;
   cutoffDate?: string;
   secretRef: string;
@@ -53,6 +59,11 @@ type GoogleOAuthTokenStore = {
   updatedAt: string;
 };
 
+type GoogleOAuthStateStore = {
+  version: 1;
+  values: Record<string, { expiresAt: string }>;
+};
+
 function providersPath(workspace: string): string {
   return join(workspace, "calendar-providers.json");
 }
@@ -77,7 +88,53 @@ function googleOAuthTokenPath(): string {
   return join(credentialsDir(), "calendar-google-oauth-token.json");
 }
 
+function googleOAuthStatePath(): string {
+  return join(credentialsDir(), "calendar-google-oauth-state.json");
+}
+
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+
+async function readGoogleOAuthStateStore(): Promise<GoogleOAuthStateStore> {
+  try {
+    const raw = await readFile(googleOAuthStatePath(), "utf-8");
+    const parsed = JSON.parse(raw) as Partial<GoogleOAuthStateStore>;
+    return { version: 1, values: parsed.values || {} };
+  } catch {
+    return { version: 1, values: {} };
+  }
+}
+
+async function writeGoogleOAuthStateStore(store: GoogleOAuthStateStore): Promise<void> {
+  await mkdir(credentialsDir(), { recursive: true });
+  await writeFile(googleOAuthStatePath(), JSON.stringify(store, null, 2), "utf-8");
+}
+
+export async function putGoogleOAuthState(ttlSeconds = 600): Promise<string> {
+  const state = randomBytes(24).toString("hex");
+  const store = await readGoogleOAuthStateStore();
+  const expiresAt = new Date(Date.now() + Math.max(30, ttlSeconds) * 1000).toISOString();
+  store.values[state] = { expiresAt };
+  const now = Date.now();
+  for (const [key, value] of Object.entries(store.values)) {
+    const exp = new Date(value.expiresAt).getTime();
+    if (!Number.isFinite(exp) || exp < now) delete store.values[key];
+  }
+  await writeGoogleOAuthStateStore(store);
+  return state;
+}
+
+export async function consumeGoogleOAuthState(state: string): Promise<boolean> {
+  const trimmed = String(state || "").trim();
+  if (!trimmed) return false;
+  const store = await readGoogleOAuthStateStore();
+  const row = store.values[trimmed];
+  if (!row) return false;
+  delete store.values[trimmed];
+  const exp = new Date(row.expiresAt).getTime();
+  const valid = Number.isFinite(exp) && exp >= Date.now();
+  await writeGoogleOAuthStateStore(store);
+  return valid;
+}
 
 async function getOrCreateKey(): Promise<Buffer> {
   await mkdir(credentialsDir(), { recursive: true });
@@ -424,6 +481,21 @@ export async function upsertCalendarProvider(
     serverUrl: payload.serverUrl.trim(),
     calendarUrl: payload.calendarUrl.trim(),
     calendarId: payload.calendarId?.trim() || undefined,
+    discoveredCollections: Array.isArray(payload.discoveredCollections)
+      ? payload.discoveredCollections
+        .filter((c) => c && typeof c.url === "string")
+        .map((c) => ({
+          url: String(c.url).trim(),
+          name: c.name ? String(c.name).trim() : undefined,
+          components: Array.isArray(c.components)
+            ? c.components.filter((x): x is "VEVENT" | "VTODO" => x === "VEVENT" || x === "VTODO")
+            : undefined,
+        }))
+        .filter((c) => c.url)
+      : (idx >= 0 ? accounts[idx].discoveredCollections : undefined),
+    selectedCalendarUrls: Array.isArray(payload.selectedCalendarUrls)
+      ? payload.selectedCalendarUrls.map((u) => String(u || "").trim()).filter(Boolean)
+      : (idx >= 0 ? accounts[idx].selectedCalendarUrls : undefined),
     username: payload.username.trim(),
     cutoffDate: payload.cutoffDate?.trim() || undefined,
     secretRef,
@@ -540,7 +612,7 @@ function formatCalDavHttpError(
       [
         `Google CalDAV access denied (403${code ? ` ${code}` : ""}).`,
         reason || "The OAuth token is valid but lacks permission for this calendar or API.",
-        "Verify Calendar API is enabled and OAuth consent/scopes allow calendar.readonly.",
+        "Reconnect Google to grant write scope (https://www.googleapis.com/auth/calendar), then retry.",
       ].join(" ")
     );
   }
@@ -656,7 +728,9 @@ function parseCalendarData(xml: string, calendarUrl: string): ParsedCalDavItem[]
       const uid = parseIcsField(block, "UID");
       const title = parseIcsField(block, "SUMMARY") || "(untitled)";
       const notes = parseIcsField(block, "DESCRIPTION") || undefined;
-      const dueAt = parseIcsDate(parseIcsField(block, "DUE")) || parseIcsDate(parseIcsField(block, "DTSTART"));
+      const dueAt = parseIcsDate(parseIcsField(block, "DUE"))
+        || parseIcsDate(parseIcsField(block, "DTSTART"))
+        || parseIcsDate(parseIcsField(block, "DTSTAMP"));
       if (!uid || !dueAt) continue;
       const status: "scheduled" | "done" = rawStatus === "COMPLETED" ? "done" : "scheduled";
       out.push({
@@ -677,23 +751,25 @@ function parseCalendarData(xml: string, calendarUrl: string): ParsedCalDavItem[]
   return out;
 }
 
-function buildCalendarQueryBody(from: string, to: string): string {
+function buildCalendarQueryBody(
+  from: string,
+  to: string,
+  component?: "VEVENT" | "VTODO",
+  includeTimeRange = true
+): string {
+  const range = includeTimeRange
+    ? `<c:time-range start="${from}" end="${to}" />`
+    : "";
+  const filter = component
+    ? `<c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="${component}">${range}</c:comp-filter></c:comp-filter></c:filter>`
+    : "";
   return `<?xml version="1.0" encoding="utf-8" ?>
 <c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
   <d:prop>
     <d:getetag />
     <c:calendar-data />
   </d:prop>
-  <c:filter>
-    <c:comp-filter name="VCALENDAR">
-      <c:comp-filter name="VEVENT">
-        <c:time-range start="${from}" end="${to}" />
-      </c:comp-filter>
-      <c:comp-filter name="VTODO">
-        <c:time-range start="${from}" end="${to}" />
-      </c:comp-filter>
-    </c:comp-filter>
-  </c:filter>
+  ${filter}
 </c:calendar-query>`;
 }
 
@@ -714,16 +790,41 @@ async function fetchCalDavEventsReport(
   const now = new Date();
   const from = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate()).toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
   const to = new Date(now.getFullYear() + 1, now.getMonth(), now.getDate()).toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
-  const body = buildCalendarQueryBody(from, to);
+  const headers = {
+    Authorization: authHeader,
+    Depth: "1",
+    "Content-Type": "application/xml; charset=utf-8",
+  };
+
+  if (account.vendor === "icloud") {
+    const parts: string[] = [];
+    for (const component of ["VEVENT", "VTODO"] as const) {
+      let res = await fetch(calendarUrl, {
+        method: "REPORT",
+        headers,
+        body: buildCalendarQueryBody(from, to, component, component === "VEVENT"),
+      });
+      let text = await res.text();
+      if (!res.ok && res.status !== 207) {
+        res = await fetch(calendarUrl, {
+          method: "REPORT",
+          headers,
+          body: buildCalendarQueryBody(from, to, component, false),
+        });
+        text = await res.text();
+      }
+      if (res.ok || res.status === 207) parts.push(text);
+    }
+    if (parts.length === 0) {
+      throw new Error("CalDAV sync report failed for both VEVENT and VTODO queries");
+    }
+    return parts.join("\n");
+  }
 
   const res = await fetch(calendarUrl, {
     method: "REPORT",
-    headers: {
-      Authorization: authHeader,
-      Depth: "1",
-      "Content-Type": "application/xml; charset=utf-8",
-    },
-    body,
+    headers,
+    body: buildCalendarQueryBody(from, to),
   });
   const text = await res.text();
   if (!res.ok && res.status !== 207) {
@@ -761,15 +862,172 @@ function nestedHref(xml: string, containerTag: string): string | null {
   return href?.[1] ? decodeXmlEntities(href[1].trim()) : null;
 }
 
-async function discoverCalDavCalendarUrls(account: CalendarProviderAccount, password: string): Promise<string[]> {
-  const auth = Buffer.from(`${account.username}:${password}`).toString("base64");
+export type CalDavCollection = {
+  url: string;
+  name?: string;
+  components: Array<"VEVENT" | "VTODO">;
+};
+
+function isOptInOnlyCollection(collection: Pick<CalDavCollection, "url" | "name" | "components">): boolean {
+  const source = `${collection.name || ""} ${collection.url}`.toLowerCase();
+  const hasVtodo = Array.isArray(collection.components) && collection.components.includes("VTODO");
+  return source.includes("birthday")
+    || source.includes("birthdays")
+    || source.includes("holiday")
+    || source.includes("holidays")
+    || source.includes("%40virtual")
+    || source.includes("tasks")
+    || source.includes("reminders")
+    || hasVtodo;
+}
+
+function defaultSelectedCollections(collections: CalDavCollection[]): string[] {
+  const selected = collections
+    .filter((c) => !isOptInOnlyCollection(c))
+    .map((c) => c.url);
+  if (selected.length > 0) return selected;
+  return collections.map((c) => c.url);
+}
+
+function isIcloudSystemCollection(url: string): boolean {
+  const lower = url.toLowerCase();
+  return lower.includes("/calendars/inbox/")
+    || lower.includes("/calendars/outbox/")
+    || lower.includes("/calendars/notification/");
+}
+
+async function probeGoogleCollections(account: CalendarProviderAccount, credential: string): Promise<CalDavCollection[]> {
+  const calendarId = (account.calendarId || account.username || "").trim();
+  if (!calendarId) return [];
+  const base = (account.serverUrl || "https://apidata.googleusercontent.com/caldav/v2").replace(/\/+$/, "");
+  const encodedId = encodeURIComponent(calendarId);
+  const candidates: CalDavCollection[] = [
+    { url: `${base}/${encodedId}/events`, name: "Primary", components: ["VEVENT"] },
+    { url: `${base}/${encodedId}/tasks`, name: "Tasks", components: ["VTODO"] },
+    { url: `${base}/${encodedId}/birthdays`, name: "Birthdays", components: ["VEVENT"] },
+    { url: `${base}/addressbook%23contacts@group.v.calendar.google.com/events`, name: "Birthdays", components: ["VEVENT"] },
+  ];
+
+  const out: CalDavCollection[] = [];
+  for (const candidate of candidates) {
+    try {
+      await fetchCalDavEventsReport(account, credential, candidate.url);
+      out.push(candidate);
+    } catch {
+      // ignore invalid collection candidate
+    }
+  }
+  return out;
+}
+
+function normalizeGoogleCollections(collections: CalDavCollection[]): CalDavCollection[] {
+  const filtered = collections.filter((collection) => {
+    const url = collection.url.toLowerCase();
+    if (url.endsWith("/user") || url.endsWith("/user/")) return false;
+    const looksLikeEvents = /\/events\/?$/i.test(url);
+    const looksLikeTasks = /\/tasks\/?$/i.test(url);
+    const looksLikeBirthdays = /addressbook%23contacts@group\.v\.calendar\.google\.com\/events\/?$/i.test(url)
+      || /\/birthdays\/?$/i.test(url);
+    return looksLikeEvents || looksLikeTasks || looksLikeBirthdays;
+  });
+
+  const byUrl = new Map<string, CalDavCollection>();
+  for (const c of filtered) {
+    const key = c.url.replace(/\/+$/, "");
+    if (!byUrl.has(key)) byUrl.set(key, c);
+  }
+  return Array.from(byUrl.values());
+}
+
+export async function discoverProviderCollections(account: CalendarProviderAccount): Promise<{
+  discoveredCollections: CalDavCollection[];
+  selectedCalendarUrls: string[];
+}> {
+  const credential = await getProviderCredential(account);
+  let discoveredCollections: CalDavCollection[] = [];
+  try {
+    discoveredCollections = await discoverCalDavCollections(account, credential);
+  } catch {
+    discoveredCollections = [];
+  }
+
+  if (account.vendor === "google") {
+    const probed = await probeGoogleCollections(account, credential);
+    const byUrl = new Map<string, CalDavCollection>();
+    for (const c of [...discoveredCollections, ...probed]) {
+      const key = c.url.trim();
+      if (!key) continue;
+      if (!byUrl.has(key)) byUrl.set(key, c);
+    }
+    discoveredCollections = normalizeGoogleCollections(Array.from(byUrl.values()));
+  }
+
+  const selectedCalendarUrls = defaultSelectedCollections(discoveredCollections);
+  return { discoveredCollections, selectedCalendarUrls };
+}
+
+function extractCollectionComponents(responseXml: string): Array<"VEVENT" | "VTODO"> {
+  const out: Array<"VEVENT" | "VTODO"> = [];
+  const setMatch = /<[^>]*supported-calendar-component-set[^>]*>([\s\S]*?)<\/[^>]*supported-calendar-component-set>/i.exec(responseXml);
+  const source = setMatch?.[1] || "";
+  if (!source) return out;
+  if (/<[^>]*comp[^>]*name="VEVENT"/i.test(source)) out.push("VEVENT");
+  if (/<[^>]*comp[^>]*name="VTODO"/i.test(source)) out.push("VTODO");
+  return out;
+}
+
+function collectionResourceFlags(responseXml: string): {
+  hasCalendar: boolean;
+  hasScheduleInbox: boolean;
+  hasScheduleOutbox: boolean;
+} {
+  const resourceTypeMatch = /<[^>]*resourcetype[^>]*>([\s\S]*?)<\/[^>]*resourcetype>/i.exec(responseXml);
+  const source = resourceTypeMatch?.[1] || "";
+  return {
+    hasCalendar: /<[^>]*calendar(?:\s*\/\s*>|>)/i.test(source),
+    hasScheduleInbox: /<[^>]*schedule-inbox(?:\s*\/\s*>|>)/i.test(source),
+    hasScheduleOutbox: /<[^>]*schedule-outbox(?:\s*\/\s*>|>)/i.test(source),
+  };
+}
+
+async function probeCollectionComponents(
+  account: CalendarProviderAccount,
+  credential: string,
+  collectionUrl: string
+): Promise<Array<"VEVENT" | "VTODO">> {
+  const authHeader = buildCalDavAuthHeader(account, credential);
+  const body = "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:prop><c:supported-calendar-component-set/></d:prop></d:propfind>";
+  const request = async (url: string) => {
+    const res = await fetch(url, {
+      method: "PROPFIND",
+      headers: {
+        Authorization: authHeader,
+        Depth: "0",
+        "Content-Type": "application/xml; charset=utf-8",
+      },
+      body,
+    });
+    const xml = await res.text().catch(() => "");
+    return { res, xml };
+  };
+
+  let { res, xml } = await request(collectionUrl);
+  if (!res.ok && res.status !== 207 && !collectionUrl.endsWith("/")) {
+    ({ res, xml } = await request(`${collectionUrl}/`));
+  }
+  if (!res.ok && res.status !== 207) return [];
+  return extractCollectionComponents(xml);
+}
+
+async function discoverCalDavCollections(account: CalendarProviderAccount, credential: string): Promise<CalDavCollection[]> {
+  const authHeader = buildCalDavAuthHeader(account, credential);
   const baseUrl = account.serverUrl || account.calendarUrl;
   if (!baseUrl) throw new Error("serverUrl is required for CalDAV discovery");
 
   const principalRes = await fetch(baseUrl, {
     method: "PROPFIND",
     headers: {
-      Authorization: `Basic ${auth}`,
+      Authorization: authHeader,
       Depth: "0",
       "Content-Type": "application/xml; charset=utf-8",
     },
@@ -792,7 +1050,7 @@ async function discoverCalDavCalendarUrls(account: CalendarProviderAccount, pass
   const homeRes = await fetch(principalUrl, {
     method: "PROPFIND",
     headers: {
-      Authorization: `Basic ${auth}`,
+      Authorization: authHeader,
       Depth: "0",
       "Content-Type": "application/xml; charset=utf-8",
     },
@@ -815,11 +1073,11 @@ async function discoverCalDavCalendarUrls(account: CalendarProviderAccount, pass
   const calendarsReq = {
     method: "PROPFIND",
     headers: {
-      Authorization: `Basic ${auth}`,
+      Authorization: authHeader,
       Depth: "1",
       "Content-Type": "application/xml; charset=utf-8",
     },
-    body: "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:prop><d:resourcetype/><d:displayname/></d:prop></d:propfind>",
+    body: "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:prop><d:resourcetype/><d:displayname/><c:supported-calendar-component-set/></d:prop></d:propfind>",
   } as const;
 
   let calendarsRes = await fetch(homeUrl, calendarsReq);
@@ -839,7 +1097,7 @@ async function discoverCalDavCalendarUrls(account: CalendarProviderAccount, pass
 
   const tryReport = async (url: string): Promise<boolean> => {
     try {
-      await fetchCalDavEventsReport(account, password, url);
+      await fetchCalDavEventsReport(account, credential, url);
       return true;
     } catch {
       return false;
@@ -848,50 +1106,110 @@ async function discoverCalDavCalendarUrls(account: CalendarProviderAccount, pass
 
   const responses = [...calendarsXml.matchAll(/<[^>]*response[^>]*>([\s\S]*?)<\/[^>]*response>/gi)].map((m) => m[1] || "");
   const normalizedHome = homeUrl.replace(/\/+$/, "");
-  const calendarCandidates: string[] = [];
-  const fallbackCandidates: string[] = [];
+  const calendarCandidates: CalDavCollection[] = [];
+  const fallbackCandidates: CalDavCollection[] = [];
   for (const response of responses) {
     const href = firstTagValue(response, ["href"]);
     if (!href) continue;
     const abs = toAbsUrl(homeUrl, href);
     if (abs.replace(/\/+$/, "") === normalizedHome) continue;
+    if (account.vendor === "icloud" && isIcloudSystemCollection(abs)) continue;
     if (/^https?:\/\//i.test(abs)) {
-      fallbackCandidates.push(abs);
-      const hasCalendarResource = /<[^>]*resourcetype[^>]*>[\s\S]*?<[^>]*calendar(?:\s*\/\s*>|>)/i.test(response)
-        && !/calendar-home-set/i.test(response);
-      if (hasCalendarResource) {
-        calendarCandidates.push(abs);
+      const name = firstTagValue(response, ["displayname"]) || undefined;
+      const components = extractCollectionComponents(response);
+      const resourceFlags = collectionResourceFlags(response);
+      const normalizedComponents: Array<"VEVENT" | "VTODO"> = components;
+      if (account.vendor === "icloud" && normalizedComponents.length === 0 && /\/calendars\/tasks\//i.test(abs)) {
+        normalizedComponents.push("VTODO");
+      }
+      const isSchedBox = resourceFlags.hasScheduleInbox || resourceFlags.hasScheduleOutbox;
+      const hasCalendarResource = resourceFlags.hasCalendar && !/calendar-home-set/i.test(response);
+      if (!isSchedBox) {
+        fallbackCandidates.push({ url: abs, name, components: normalizedComponents });
+      }
+      if (hasCalendarResource && !isSchedBox) {
+        calendarCandidates.push({ url: abs, name, components: normalizedComponents });
       }
     }
   }
 
+  const enrichCandidates = async (candidates: CalDavCollection[]): Promise<CalDavCollection[]> => {
+    const out: CalDavCollection[] = [];
+    for (const candidate of candidates) {
+      if (candidate.components.length > 0) {
+        out.push(candidate);
+        continue;
+      }
+      const probed = await probeCollectionComponents(account, credential, candidate.url);
+      if (probed.length > 0) {
+        out.push({ ...candidate, components: probed });
+      } else {
+        out.push(candidate);
+      }
+    }
+    return out;
+  };
+
+  const enrichedCalendarCandidates = await enrichCandidates(calendarCandidates);
+  const enrichedFallbackCandidates = await enrichCandidates(fallbackCandidates);
+
   const tried = new Set<string>();
-  const okCandidates: string[] = [];
-  for (const candidate of [...calendarCandidates, ...fallbackCandidates]) {
-    if (tried.has(candidate)) continue;
-    tried.add(candidate);
-    if (await tryReport(candidate)) okCandidates.push(candidate);
+  const okCandidates: CalDavCollection[] = [];
+  for (const candidate of [...enrichedCalendarCandidates, ...enrichedFallbackCandidates]) {
+    if (tried.has(candidate.url)) continue;
+    tried.add(candidate.url);
+    if (await tryReport(candidate.url)) okCandidates.push(candidate);
   }
 
-  if (okCandidates.length === 0) {
-    throw new Error("Could not discover a calendar collection URL");
+  if (okCandidates.length > 0) return okCandidates;
+
+  // Fallback: some servers reject REPORT on discover, but still expose valid
+  // calendar collections through PROPFIND resource type metadata.
+  const fallback = enrichedCalendarCandidates.length > 0 ? enrichedCalendarCandidates : enrichedFallbackCandidates;
+  if (fallback.length > 0) {
+    return fallback;
   }
-  return okCandidates;
+  throw new Error("Could not discover a calendar collection URL");
 }
 
 async function resolveCalDavCalendarUrls(account: CalendarProviderAccount, password: string): Promise<string[]> {
-  if (account.vendor === "google") {
+  if (Array.isArray(account.selectedCalendarUrls) && account.selectedCalendarUrls.length > 0) {
+    return account.selectedCalendarUrls;
+  }
+  if (Array.isArray(account.discoveredCollections) && account.discoveredCollections.length > 0) {
+    return defaultSelectedCollections(account.discoveredCollections as CalDavCollection[]);
+  }
+
+  let discoveryError: Error | null = null;
+  try {
+    const discovered = await discoverCalDavCollections(account, password);
+    if (discovered.length > 0) {
+      return defaultSelectedCollections(discovered);
+    }
+  } catch (err) {
+    discoveryError = err instanceof Error ? err : new Error(String(err));
+  }
+
+  const given = (account.calendarUrl || "").trim();
+  const isRootHost = /^https?:\/\/[^/]+\/?$/i.test(given);
+  const isCalendarHome = /\/calendars\/?$/i.test(given);
+  if (!given || isRootHost || isCalendarHome) {
+    if (account.vendor === "google") {
+      const calendarId = (account.calendarId || account.username || "").trim();
+      if (!calendarId) throw new Error("Google calendar ID (or username) is required");
+      const base = account.serverUrl || "https://apidata.googleusercontent.com/caldav/v2";
+      return [buildGoogleCalendarUrl(base, calendarId)];
+    }
+    throw new Error(discoveryError?.message || "Could not discover calendar collections");
+  }
+
+  if (account.vendor === "google" && !/\/events\/?$/i.test(given)) {
     const calendarId = (account.calendarId || account.username || "").trim();
     if (!calendarId) throw new Error("Google calendar ID (or username) is required");
     const base = account.serverUrl || "https://apidata.googleusercontent.com/caldav/v2";
     return [buildGoogleCalendarUrl(base, calendarId)];
   }
-  const given = (account.calendarUrl || "").trim();
-  const isRootHost = /^https?:\/\/[^/]+\/?$/i.test(given);
-  const isCalendarHome = /\/calendars\/?$/i.test(given);
-  if (!given || isRootHost || isCalendarHome) {
-    return discoverCalDavCalendarUrls(account, password);
-  }
+
   return [given];
 }
 
@@ -926,7 +1244,7 @@ export async function testOrDiscoverCalDavConnection(
   account: Pick<CalendarProviderAccount, "serverUrl" | "calendarUrl" | "username">
   & { serverUrl: string; vendor?: "icloud" | "google"; calendarId?: string },
   password: string
-): Promise<{ calendarUrl: string }> {
+): Promise<{ calendarUrl: string; discoveredCollections: CalDavCollection[]; selectedCalendarUrls: string[] }> {
   const normalized: CalendarProviderAccount = {
     id: "tmp",
     type: "caldav",
@@ -941,7 +1259,16 @@ export async function testOrDiscoverCalDavConnection(
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  const calendarUrls = await resolveCalDavCalendarUrls(normalized, password);
+  let discoveredCollections: CalDavCollection[] = [];
+  try {
+    discoveredCollections = await discoverCalDavCollections(normalized, password);
+  } catch {
+    discoveredCollections = [];
+  }
+
+  const calendarUrls = discoveredCollections.length
+    ? defaultSelectedCollections(discoveredCollections)
+    : await resolveCalDavCalendarUrls(normalized, password);
   const calendarUrl = calendarUrls[0];
   await testCalDavConnection({
     calendarUrl,
@@ -949,11 +1276,22 @@ export async function testOrDiscoverCalDavConnection(
     vendor: account.vendor,
     calendarId: account.calendarId,
   }, password);
-  return { calendarUrl };
+  return {
+    calendarUrl,
+    discoveredCollections,
+    selectedCalendarUrls: calendarUrls,
+  };
 }
 
-async function getProviderCredential(account: CalendarProviderAccount): Promise<string> {
+async function getProviderCredential(account: CalendarProviderAccount, mode: "read" | "write" = "read"): Promise<string> {
   if (account.vendor === "google") {
+    if (mode === "write") {
+      const tokenStore = await readGoogleOAuthTokenStore();
+      const scope = String(tokenStore?.scope || "").trim();
+      if (scope && !scope.split(/\s+/).includes("https://www.googleapis.com/auth/calendar")) {
+        throw new Error("Google OAuth token is read-only. Click Reconnect Google to grant write scope, then retry.");
+      }
+    }
     return getGoogleOAuthAccessToken();
   }
   const secret = await readCalendarProviderSecret(account.secretRef);
@@ -989,6 +1327,21 @@ function escapeIcsText(value: string): string {
 
 function ensureCalUrlSlash(url: string): string {
   return url.endsWith("/") ? url : `${url}/`;
+}
+
+function pickWriteCollection(account: CalendarProviderAccount, kind: "event" | "reminder"): string {
+  const collections = Array.isArray(account.discoveredCollections) ? account.discoveredCollections : [];
+  const selected = new Set((account.selectedCalendarUrls || []).map((u) => u.trim()).filter(Boolean));
+  const selectedCollections = collections.filter((c) => selected.size === 0 || selected.has(c.url));
+  const required = kind === "event" ? "VEVENT" : "VTODO";
+  const exact = selectedCollections.find((c) => (c.components || []).includes(required));
+  if (exact?.url) return exact.url;
+  if (kind === "reminder" && account.vendor === "google") {
+    throw new Error("No selected provider collection supports reminders (VTODO). Edit provider collections and include a Tasks/Reminders list.");
+  }
+  if (account.calendarUrl) return account.calendarUrl;
+  if (selectedCollections[0]?.url) return selectedCollections[0].url;
+  throw new Error(`No provider collection supports ${required}. Open provider settings and select a compatible collection.`);
 }
 
 function buildProviderItemIcs(payload: {
@@ -1054,10 +1407,13 @@ export async function createCalDavProviderItem(
     endAt?: string;
   }
 ): Promise<{ externalId: string; itemUrl: string; etag?: string; component: "VEVENT" | "VTODO"; calendarUrl: string }> {
-  const credential = await getProviderCredential(account);
+  if (account.vendor === "google" && payload.kind === "reminder") {
+    throw new Error("Google CalDAV does not support reminders (VTODO). Use event sync via CalDAV or integrate Google Tasks API for tasks/reminders.");
+  }
+  const credential = await getProviderCredential(account, "write");
   const authHeader = buildCalDavAuthHeader(account, credential);
-  if (!account.calendarUrl) throw new Error("Provider calendar URL is missing. Re-test and save provider first.");
-  const calendarUrl = ensureCalUrlSlash(account.calendarUrl);
+  const writeCollection = pickWriteCollection(account, payload.kind);
+  const calendarUrl = ensureCalUrlSlash(writeCollection);
 
   const uid = randomUUID();
   const itemUrl = toAbsUrl(calendarUrl, `${encodeURIComponent(uid)}.ics`);
@@ -1102,7 +1458,10 @@ export async function updateCalDavProviderItem(
     status?: "scheduled" | "done";
   }
 ): Promise<{ etag?: string; itemUrl: string; component: "VEVENT" | "VTODO" }> {
-  const credential = await getProviderCredential(account);
+  if (account.vendor === "google" && payload.kind === "reminder") {
+    throw new Error("Google CalDAV does not support reminders (VTODO) updates. This item must be managed through Google Tasks API.");
+  }
+  const credential = await getProviderCredential(account, "write");
   const authHeader = buildCalDavAuthHeader(account, credential);
   const uid = current.externalId || randomUUID();
   const fallbackBase = account.calendarUrl ? ensureCalUrlSlash(account.calendarUrl) : "";
@@ -1123,8 +1482,19 @@ export async function updateCalDavProviderItem(
     "Content-Type": "text/calendar; charset=utf-8",
   };
   if (current.providerEtag) headers["If-Match"] = current.providerEtag;
-  const res = await fetch(itemUrl, { method: "PUT", headers, body });
-  const text = await res.text().catch(() => "");
+  let res = await fetch(itemUrl, { method: "PUT", headers, body });
+  let text = await res.text().catch(() => "");
+  if (!res.ok && res.status === 412 && headers["If-Match"]) {
+    res = await fetch(itemUrl, {
+      method: "PUT",
+      headers: {
+        Authorization: authHeader,
+        "Content-Type": "text/calendar; charset=utf-8",
+      },
+      body,
+    });
+    text = await res.text().catch(() => "");
+  }
   if (!res.ok) {
     throw formatCalDavHttpError(res.status, text, {
       phase: "remote update",
@@ -1143,12 +1513,16 @@ export async function updateCalDavProviderItem(
 export async function deleteCalDavProviderItem(account: CalendarProviderAccount, entry: CalendarEntry): Promise<void> {
   const itemUrl = entry.providerItemUrl;
   if (!itemUrl) throw new Error("Provider item URL is missing. Sync the provider and retry.");
-  const credential = await getProviderCredential(account);
+  const credential = await getProviderCredential(account, "write");
   const authHeader = buildCalDavAuthHeader(account, credential);
   const headers: Record<string, string> = { Authorization: authHeader };
   if (entry.providerEtag) headers["If-Match"] = entry.providerEtag;
-  const res = await fetch(itemUrl, { method: "DELETE", headers });
-  const text = await res.text().catch(() => "");
+  let res = await fetch(itemUrl, { method: "DELETE", headers });
+  let text = await res.text().catch(() => "");
+  if (!res.ok && res.status === 412 && headers["If-Match"]) {
+    res = await fetch(itemUrl, { method: "DELETE", headers: { Authorization: authHeader } });
+    text = await res.text().catch(() => "");
+  }
   if (!res.ok && res.status !== 404) {
     throw formatCalDavHttpError(res.status, text, {
       phase: "remote delete",
@@ -1164,14 +1538,23 @@ export async function syncCalDavProvider(workspace: string, account: CalendarPro
 
   const calendarUrls = await resolveCalDavCalendarUrls(account, credential);
   const remoteEvents = new Map<string, ParsedCalDavItem>();
+  let successfulCollections = 0;
+  const collectionErrors: string[] = [];
   for (const url of calendarUrls) {
     try {
       const evXml = await fetchCalDavEventsReport(account, credential, url);
       for (const event of parseCalendarData(evXml, url)) remoteEvents.set(event.uid, event);
-    } catch {
-      // ignore collection-specific errors
+      successfulCollections += 1;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      collectionErrors.push(`${url}: ${message}`);
     }
   }
+
+  if (calendarUrls.length > 0 && successfulCollections === 0) {
+    throw new Error(`All selected collections failed to sync. ${collectionErrors[0] || "No readable collection."}`);
+  }
+
   const entries = await readCalendarEntries(workspace);
   const kept: CalendarEntry[] = entries.filter((entry) => entry.providerAccountId !== account.id);
 

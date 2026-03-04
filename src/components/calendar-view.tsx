@@ -48,6 +48,12 @@ type ProviderAccount = {
   serverUrl: string;
   calendarUrl: string;
   calendarId?: string;
+  discoveredCollections?: Array<{
+    url: string;
+    name?: string;
+    components?: Array<"VEVENT" | "VTODO">;
+  }>;
+  selectedCalendarUrls?: string[];
   username: string;
   cutoffDate?: string;
   enabled: boolean;
@@ -264,11 +270,14 @@ export function CalendarView() {
     serverUrl: string;
     calendarUrl: string;
     calendarId: string;
+    discoveredCollections: Array<{ url: string; name?: string; components?: Array<"VEVENT" | "VTODO"> }>;
+    selectedCalendarUrls: string[];
     username: string;
     cutoffDate: string;
     password: string;
-  }>({ vendor: "icloud", label: "", serverUrl: "", calendarUrl: "", calendarId: "", username: "", cutoffDate: "", password: "" });
+  }>({ vendor: "icloud", label: "", serverUrl: "", calendarUrl: "", calendarId: "", discoveredCollections: [], selectedCalendarUrls: [], username: "", cutoffDate: "", password: "" });
   const [providerEditSaving, setProviderEditSaving] = useState(false);
+  const [providerDiscoveringId, setProviderDiscoveringId] = useState<string | null>(null);
   const [hiddenProviderAccountIds, setHiddenProviderAccountIds] = useState<Set<string>>(new Set());
   const [purgeConfirmProviderId, setPurgeConfirmProviderId] = useState<string | null>(null);
   const [purgingProviderId, setPurgingProviderId] = useState<string | null>(null);
@@ -312,6 +321,13 @@ export function CalendarView() {
   const enabledProviders = useMemo(() => {
     return (payload?.providers || []).filter((provider) => provider.enabled);
   }, [payload?.providers]);
+
+  const configuredProvidersForPreset = useMemo(() => {
+    return (payload?.providers || []).filter((provider) => {
+      const vendor = provider.vendor === "google" ? "google" : "icloud";
+      return vendor === providerPreset;
+    });
+  }, [payload?.providers, providerPreset]);
 
   const resetCreateForm = useCallback(() => {
     setCreateTitle("");
@@ -449,6 +465,13 @@ export function CalendarView() {
       setCreateError("Select a provider account before creating.");
       return;
     }
+    if (createSaveToProvider && createKind === "reminder") {
+      const target = (payload?.providers || []).find((p) => p.id === createProviderId);
+      if (target?.vendor === "google") {
+        setCreateError("Google CalDAV does not support reminders (VTODO). Choose iCloud or create as local-only.");
+        return;
+      }
+    }
     setSaving(true);
     setCreateError(null);
     try {
@@ -478,7 +501,7 @@ export function CalendarView() {
     } finally {
       setSaving(false);
     }
-  }, [createDueAt, createEndAt, createKind, createNotes, createProviderId, createSaveToProvider, createTitle, refresh, resetCreateForm]);
+  }, [createDueAt, createEndAt, createKind, createNotes, createProviderId, createSaveToProvider, createTitle, payload?.providers, refresh, resetCreateForm]);
 
   const patchEntry = useCallback(async (id: string, patch: Record<string, unknown>) => {
     const res = await fetch("/api/calendar", {
@@ -707,6 +730,22 @@ export function CalendarView() {
       serverUrl: provider.serverUrl,
       calendarUrl: provider.calendarUrl,
       calendarId: provider.calendarId || "",
+      discoveredCollections: provider.discoveredCollections || [],
+      selectedCalendarUrls:
+        (provider.selectedCalendarUrls && provider.selectedCalendarUrls.length > 0)
+          ? provider.selectedCalendarUrls
+          : (provider.discoveredCollections || [])
+            .filter((c) => {
+              const source = `${c.name || ""} ${c.url}`.toLowerCase();
+              return !(
+                source.includes("birth")
+                || source.includes("holiday")
+                || source.includes("%40virtual")
+                || source.includes("tasks")
+                || source.includes("reminders")
+              );
+            })
+            .map((c) => c.url),
       username: provider.username,
       cutoffDate: toDateInputValue(provider.cutoffDate),
       password: "",
@@ -730,6 +769,8 @@ export function CalendarView() {
           serverUrl: editingProvider.serverUrl,
           calendarUrl: editingProvider.calendarUrl,
           calendarId: editingProvider.vendor === "google" ? editingProvider.calendarId || editingProvider.username : "",
+          discoveredCollections: editingProvider.discoveredCollections,
+          selectedCalendarUrls: editingProvider.selectedCalendarUrls,
           username: editingProvider.username,
           password: editingProvider.password,
           cutoffDate: editingProvider.cutoffDate || undefined,
@@ -741,12 +782,54 @@ export function CalendarView() {
         throw new Error(data?.error || `Update failed (${res.status})`);
       }
       setEditingProviderId(null);
-      setEditingProvider({ vendor: "icloud", label: "", serverUrl: "", calendarUrl: "", calendarId: "", username: "", cutoffDate: "", password: "" });
+      setEditingProvider({ vendor: "icloud", label: "", serverUrl: "", calendarUrl: "", calendarId: "", discoveredCollections: [], selectedCalendarUrls: [], username: "", cutoffDate: "", password: "" });
       await refresh();
     } finally {
       setProviderEditSaving(false);
     }
   }, [editingProvider, refresh]);
+
+  const discoverProviderCollectionsFor = useCallback(async (provider: ProviderAccount) => {
+    setProviderDiscoveringId(provider.id);
+    try {
+      const res = await fetch("/api/calendar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "provider-discover", accountId: provider.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.ok === false) {
+        throw new Error(data?.error || `Discover failed (${res.status})`);
+      }
+      setProviderRowMessage((prev) => ({
+        ...prev,
+        [provider.id]: {
+          type: "ok",
+          text: `Discovered ${Number(data?.provider?.discoveredCollections?.length || 0)} collection(s).`,
+        },
+      }));
+      if (editingProviderId === provider.id && data?.provider) {
+        const discoveredCollections = Array.isArray(data.provider.discoveredCollections) ? data.provider.discoveredCollections : [];
+        const selectedCalendarUrls = Array.isArray(data.provider.selectedCalendarUrls) ? data.provider.selectedCalendarUrls : [];
+        setEditingProvider((prev) => ({
+          ...prev,
+          discoveredCollections,
+          selectedCalendarUrls,
+        }));
+      }
+      await refresh();
+    } catch (err) {
+      setProviderRowMessage((prev) => ({
+        ...prev,
+        [provider.id]: {
+          type: "err",
+          text: err instanceof Error ? err.message : String(err),
+        },
+      }));
+    } finally {
+      setProviderDiscoveringId(null);
+    }
+  }, [editingProviderId, refresh]);
 
   const isCompletedItem = useCallback((item: CalendarItem): boolean => {
     if (item.type === "task") return item.status === "done";
@@ -796,6 +879,7 @@ export function CalendarView() {
 
   const openEditModal = useCallback((item: CalendarItem) => {
     if (item.type === "task") return;
+    setCalendarError(null);
     setEditItemId(item.id);
     setEditTitle(item.title);
     setEditNotes(item.notes || "");
@@ -806,6 +890,7 @@ export function CalendarView() {
 
   const closeEditModal = useCallback(() => {
     if (savingEdit) return;
+    setCalendarError(null);
     setEditItemId(null);
     setEditTitle("");
     setEditNotes("");
@@ -1089,9 +1174,6 @@ export function CalendarView() {
           </button>
         </div>
         )}
-        {!providerTabActive && calendarError && (
-          <p className="mt-2 text-xs text-red-300">{calendarError}</p>
-        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6">
@@ -1146,7 +1228,7 @@ export function CalendarView() {
                     <p>- Username: your Apple ID</p>
                     <p>- Password: Apple app-specific password</p>
                     <p>- Calendar URL: optional (auto-discovered)</p>
-                    <p>Note: iCloud/Apple Reminders are not imported in this version (events only).</p>
+                    <p>Note: iCloud reminders are imported when a discovered collection supports VTODO.</p>
                   </>
                 ) : (
                   <>
@@ -1155,6 +1237,7 @@ export function CalendarView() {
                     <p>- Auth: OAuth 2.0 required by Google</p>
                     <p>- Upload Google <code className="rounded bg-foreground/10 px-1">client_secret.json</code> to store client credentials in OpenClaw secrets</p>
                     <p>- Calendar ID: optional, defaults to your account email (primary calendar)</p>
+                    <p>- Note: Google CalDAV supports events; reminders/tasks require Google Tasks API.</p>
                     <p>- Callback URI: <code className="rounded bg-foreground/10 px-1">{googleCallbackUri}</code></p>
                     <p>Note: OAuth connect/sync flow is the next step after uploading client credentials.</p>
                   </>
@@ -1229,15 +1312,24 @@ export function CalendarView() {
                     className={PROVIDER_INPUT_CLASS}
                   />
                 </label>
-                <label className="min-w-0 space-y-1 text-xs text-muted-foreground">
-                  <span>Calendar URL (optional)</span>
-                  <input
-                    value={providerForm.calendarUrl}
-                    onChange={(e) => setProviderForm((p) => ({ ...p, calendarUrl: e.target.value }))}
-                    placeholder={providerPreset === "google" ? "Optional override (advanced)" : "Auto-discovered when empty"}
-                    className={PROVIDER_INPUT_CLASS}
-                  />
-                </label>
+                {providerPreset === "icloud" ? (
+                  <label className="min-w-0 space-y-1 text-xs text-muted-foreground">
+                    <span>Calendar URL (optional)</span>
+                    <input
+                      value={providerForm.calendarUrl}
+                      onChange={(e) => setProviderForm((p) => ({ ...p, calendarUrl: e.target.value }))}
+                      placeholder="Auto-discovered when empty"
+                      className={PROVIDER_INPUT_CLASS}
+                    />
+                  </label>
+                ) : (
+                  <div className="min-w-0 space-y-1 text-xs text-muted-foreground">
+                    <span>Calendar URL</span>
+                    <p className="rounded-lg border border-foreground/15 bg-muted/40 px-3 py-2 text-foreground/80">
+                      Auto-selected from discovered Google collections
+                    </p>
+                  </div>
+                )}
                 {providerPreset === "google" && (
                   <label className="min-w-0 space-y-1 text-xs text-muted-foreground">
                     <span>Calendar ID (optional)</span>
@@ -1308,10 +1400,10 @@ export function CalendarView() {
             <div className="rounded-lg border border-foreground/10 bg-card/30 p-3">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70">Configured Providers</h3>
               <div className="mt-2 space-y-2">
-                {(payload?.providers || []).length === 0 && (
-                  <p className="text-sm text-muted-foreground/70">No providers configured.</p>
+                {configuredProvidersForPreset.length === 0 && (
+                  <p className="text-sm text-muted-foreground/70">No {providerPreset === "google" ? "Google" : "iCloud"} providers configured.</p>
                 )}
-                {(payload?.providers || []).map((provider) => (
+                {configuredProvidersForPreset.map((provider) => (
                   <div
                     key={provider.id}
                     className={cn(
@@ -1419,6 +1511,74 @@ export function CalendarView() {
                             />
                           </label>
                         </div>
+                        <div className="space-y-1 rounded-md border border-foreground/10 bg-background/40 p-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-medium text-foreground/90">Collections</p>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setEditingProvider((prev) => ({
+                                  ...prev,
+                                  selectedCalendarUrls: prev.discoveredCollections
+                                    .filter((c) => {
+                                      const source = `${c.name || ""} ${c.url}`.toLowerCase();
+                                      return !(
+                                        source.includes("birth")
+                                        || source.includes("holiday")
+                                        || source.includes("%40virtual")
+                                        || source.includes("tasks")
+                                        || source.includes("reminders")
+                                      );
+                                    })
+                                    .map((c) => c.url),
+                                }))}
+                                className="text-[11px] text-sky-300 hover:text-sky-200"
+                              >
+                                Select defaults
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void discoverProviderCollectionsFor(provider)}
+                                disabled={providerDiscoveringId === provider.id}
+                                className="text-[11px] text-sky-300 hover:text-sky-200 disabled:opacity-60"
+                              >
+                                {providerDiscoveringId === provider.id ? "Discovering..." : "Discover"}
+                              </button>
+                            </div>
+                          </div>
+                          {editingProvider.discoveredCollections.length === 0 ? (
+                            <p className="text-[11px] text-muted-foreground/75">No discovered collections yet. Click Discover.</p>
+                          ) : (
+                            <div className="space-y-1">
+                              {editingProvider.discoveredCollections.map((collection) => {
+                                const selected = editingProvider.selectedCalendarUrls.includes(collection.url);
+                                const isBirthdays = `${collection.name || ""} ${collection.url}`.toLowerCase().includes("birth");
+                                const comps = (collection.components || []).join(", ") || "Unknown";
+                                return (
+                                  <label key={collection.url} className="flex items-start gap-2 rounded px-1 py-1 text-xs text-muted-foreground hover:bg-foreground/5">
+                                    <input
+                                      type="checkbox"
+                                      checked={selected}
+                                      onChange={(e) => {
+                                        setEditingProvider((prev) => {
+                                          const next = new Set(prev.selectedCalendarUrls);
+                                          if (e.target.checked) next.add(collection.url);
+                                          else next.delete(collection.url);
+                                          return { ...prev, selectedCalendarUrls: Array.from(next) };
+                                        });
+                                      }}
+                                    />
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate text-foreground/90">{collection.name || collection.url}</span>
+                                      <span className="block truncate text-[10px]">{comps}{isBirthdays ? " • birthdays" : ""}</span>
+                                      <span className="block truncate text-[10px] text-muted-foreground/70">{collection.url}</span>
+                                    </span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                         <div className="flex items-center gap-1.5">
                         <button
                           type="button"
@@ -1432,7 +1592,7 @@ export function CalendarView() {
                           type="button"
                           onClick={() => {
                             setEditingProviderId(null);
-                            setEditingProvider({ vendor: "icloud", label: "", serverUrl: "", calendarUrl: "", calendarId: "", username: "", cutoffDate: "", password: "" });
+                            setEditingProvider({ vendor: "icloud", label: "", serverUrl: "", calendarUrl: "", calendarId: "", discoveredCollections: [], selectedCalendarUrls: [], username: "", cutoffDate: "", password: "" });
                           }}
                           className="rounded border border-foreground/20 bg-background/60 px-2 py-0.5 text-[11px] text-muted-foreground"
                         >
@@ -1769,11 +1929,19 @@ export function CalendarView() {
                     options={enabledProviders.map((provider) => ({ value: provider.id, label: provider.label }))}
                     className="mt-1 w-full"
                   />
-                  {createError && <p className="mt-1 text-xs text-red-300">{createError}</p>}
+                  {createError && (
+                    <p className="mt-1 rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1 text-xs text-red-400">
+                      {createError}
+                    </p>
+                  )}
                 </div>
               )}
 
-              {!createSaveToProvider && createError && <p className="text-xs text-red-300">{createError}</p>}
+              {!createSaveToProvider && createError && (
+                <p className="rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1 text-xs text-red-400">
+                  {createError}
+                </p>
+              )}
             </div>
 
             <div className="mt-4 flex items-center justify-end gap-2">
@@ -1941,6 +2109,12 @@ export function CalendarView() {
                     className="mt-1 w-full"
                   />
                 </div>
+              )}
+
+              {calendarError && (
+                <p className="rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1 text-xs text-red-400">
+                  {calendarError}
+                </p>
               )}
             </div>
 
