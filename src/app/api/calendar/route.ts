@@ -65,14 +65,13 @@ This workspace uses a local calendar system for reminders/events shown in Missio
 
 - When user asks to create a reminder/appointment/event, always write it to \`calendar-events.json\`.
 - When user asks about upcoming/next events, read \`calendar-events.json\` first.
-- Do not rely only on Google Calendar unless user explicitly asks for it.
-- If using external calendar tools, still mirror the item into \`calendar-events.json\`.
+- If using external calendar providers, still mirror items into \`calendar-events.json\`.
 
 ## Time handling
 
-- Default timezone: \`America/New_York\` unless user says otherwise.
 - Convert natural language dates/times into a concrete ISO datetime in \`dueAt\`.
 - If user says only date (no time), default to \`09:00\` local time.
+- Use explicit timezone when provided by user; otherwise use local runtime timezone.
 `;
   const reminderDoc = `# Reminders (calendar-events.json)
 
@@ -88,6 +87,7 @@ This workspace uses \`calendar-events.json\` for reminders/events used by Missio
 - Use ISO date-time in \`dueAt\` (e.g. \`2026-03-01T15:00:00Z\`), or date-only if needed.
 - Keep \`status\` as \`scheduled\` when creating a new reminder.
 - Set \`source\` to \`channel\` when the reminder comes from chat/channel messages.
+- Reminder write-back to external providers is currently not supported.
 
 ## Example reminder object
 \`\`\`json
@@ -116,8 +116,10 @@ This workspace uses \`calendar-events.json\` for reminders/events used by Missio
 ## Rules
 - Add appointments/events as objects in \`calendar-events.json\` with \`kind: "event"\`.
 - Use ISO date-time in \`dueAt\`.
+- Include \`endAt\` when the event has a defined end time.
 - Keep \`status\` as \`scheduled\` when creating a new event.
 - Include clear title and optional notes.
+- Event write-back to configured providers is supported.
 
 ## Example event object
 \`\`\`json
